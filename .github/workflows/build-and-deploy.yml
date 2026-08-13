@@ -1,0 +1,208 @@
+name: Build and deploy
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE_REPOSITORY: orders-portal
+  K8S_NAMESPACE: ghas-mdc-demo
+  K8S_DEPLOYMENT: orders-portal
+  K8S_CONTAINER: orders-portal
+  K8S_SERVICE: orders-portal
+
+jobs:
+  build-and-deploy:
+    name: Build, attest, and deploy
+    if: ${{ vars.DEMO_CONFIGURED == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ vars.DEMO_ENVIRONMENT || 'demo' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate application
+        run: npm run lint && npm run typecheck && npm test
+
+      - name: Azure login
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Resolve image name
+        id: acr
+        shell: bash
+        run: |
+          set -euo pipefail
+          login_server="${{ vars.ACR_LOGIN_SERVER }}"
+          if [[ -z "${login_server}" ]]; then
+            echo "ACR_LOGIN_SERVER variable is required." >&2
+            exit 1
+          fi
+          echo "login_server=${login_server}" >> "${GITHUB_OUTPUT}"
+          echo "image_name=${login_server}/${IMAGE_REPOSITORY}" >> "${GITHUB_OUTPUT}"
+
+      - name: Get ACR access token
+        id: acr-token
+        shell: bash
+        run: |
+          set -euo pipefail
+          token="$(az acr login --name '${{ vars.ACR_NAME }}' --expose-token --output tsv --query accessToken)"
+          echo "::add-mask::${token}"
+          echo "token=${token}" >> "${GITHUB_OUTPUT}"
+
+      - name: Login to ACR
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ steps.acr.outputs.login_server }}
+          username: 00000000-0000-0000-0000-000000000000
+          password: ${{ steps.acr-token.outputs.token }}
+
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ steps.acr.outputs.image_name }}
+          tags: |
+            type=raw,value=${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v4
+        with:
+          subject-name: ${{ steps.acr.outputs.image_name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v5
+
+      - name: Set up kubelogin
+        uses: azure/use-kubelogin@v1
+        with:
+          kubelogin-version: v0.2.9
+
+      - name: Set AKS context
+        uses: azure/aks-set-context@v5
+        with:
+          resource-group: ${{ vars.AZURE_RESOURCE_GROUP }}
+          cluster-name: ${{ vars.AKS_NAME }}
+          admin: 'false'
+          use-kubelogin: 'true'
+
+      - name: Render and deploy Kubernetes manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          image="${{ steps.acr.outputs.image_name }}@${{ steps.build.outputs.digest }}"
+          rendered="${GITHUB_WORKSPACE}/rendered-deployment.yaml"
+
+          IMAGE="${image}" python3 - <<'PY'
+          from pathlib import Path
+          import os
+          import sys
+
+          source = Path("deploy/k8s/deployment.yaml")
+          target = Path(os.environ["GITHUB_WORKSPACE"]) / "rendered-deployment.yaml"
+          text = source.read_text()
+          placeholder_count = text.count("__IMAGE__")
+          if placeholder_count != 1:
+              print(f"deploy/k8s/deployment.yaml must contain exactly one __IMAGE__ placeholder; found {placeholder_count}", file=sys.stderr)
+              sys.exit(1)
+
+          rendered = text.replace("__IMAGE__", os.environ["IMAGE"])
+          if "__IMAGE__" in rendered:
+              print("__IMAGE__ placeholder remains after rendering", file=sys.stderr)
+              sys.exit(1)
+
+          target.write_text(rendered)
+          PY
+
+          if grep -q "__IMAGE__" "${rendered}"; then
+            echo "__IMAGE__ placeholder remains in rendered deployment manifest." >&2
+            exit 1
+          fi
+
+          kubectl -n "${K8S_NAMESPACE}" apply -f "${rendered}"
+          kubectl -n "${K8S_NAMESPACE}" apply -f deploy/k8s/service.yaml
+          kubectl -n "${K8S_NAMESPACE}" annotate "deployment/${K8S_DEPLOYMENT}" \
+            "org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}" \
+            "org.opencontainers.image.revision=${{ github.sha }}" \
+            "org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --overwrite
+          kubectl -n "${K8S_NAMESPACE}" rollout status "deployment/${K8S_DEPLOYMENT}" --timeout=180s
+
+      - name: Smoke test LoadBalancer health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint=""
+          for attempt in {1..30}; do
+            ip="$(kubectl -n "${K8S_NAMESPACE}" get service "${K8S_SERVICE}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
+            host="$(kubectl -n "${K8S_NAMESPACE}" get service "${K8S_SERVICE}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
+            endpoint="${ip:-${host}}"
+            if [[ -n "${endpoint}" ]]; then
+              break
+            fi
+            echo "Waiting for LoadBalancer endpoint (${attempt}/30)..."
+            sleep 10
+          done
+
+          if [[ -z "${endpoint}" ]]; then
+            echo "LoadBalancer endpoint was not assigned." >&2
+            kubectl -n "${K8S_NAMESPACE}" get service "${K8S_SERVICE}" -o wide
+            exit 1
+          fi
+
+          url="http://${endpoint}/healthz"
+          for attempt in {1..12}; do
+            if curl --fail --silent --show-error --max-time 5 "${url}"; then
+              echo "Smoke test passed: ${url}"
+              exit 0
+            fi
+            echo "Health check failed (${attempt}/12); retrying..."
+            sleep 10
+          done
+
+          echo "Smoke test failed: ${url}" >&2
+          exit 1

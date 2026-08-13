@@ -1,0 +1,14 @@
+.git
+.github
+.vscode
+coverage
+demo-generated
+deploy
+dist
+docs
+infra
+node_modules
+scripts
+tests
+*.log
+*.md

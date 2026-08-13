@@ -1,0 +1,41 @@
+{
+  "name": "northstar-orders",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Northstar Orders synthetic enterprise inner-source order portal",
+  "main": "dist/src/server.js",
+  "scripts": {
+    "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc",
+    "test": "npm run build -- --pretty false && node --test dist/tests/app.test.js",
+    "test:security": "npm run build -- --pretty false && node --test dist/tests/security-regression.test.js",
+    "start": "node dist/src/server.js",
+    "preflight": "node scripts/preflight.mjs",
+    "demo:setup": "node scripts/setup-demo.mjs",
+    "demo:verify": "node scripts/verify-demo.mjs",
+    "demo:secret": "node scripts/generate-demo-secret.mjs",
+    "demo:cleanup": "node scripts/cleanup-demo.mjs"
+  },
+  "dependencies": {
+    "better-sqlite3": "13.0.3",
+    "express": "5.1.0",
+    "lodash": "4.17.20"
+  },
+  "overrides": {
+    "node-addon-api": "8.8.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "9.33.0",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/express": "5.0.3",
+    "@types/lodash": "4.17.20",
+    "@types/node": "24.2.1",
+    "eslint": "9.33.0",
+    "typescript": "5.9.2",
+    "typescript-eslint": "8.39.1"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

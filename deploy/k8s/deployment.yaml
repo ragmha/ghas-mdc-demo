@@ -1,0 +1,156 @@
+# Demo application workload for the GHAS + Microsoft Defender for Cloud demo.
+#
+# IMAGE CONTRACT
+# The `image:` field below holds a placeholder token that appears EXACTLY ONCE in
+# this file. The GitHub Actions workflow MUST replace that single occurrence with
+# an immutable digest reference before applying:
+#
+#   <acrLoginServer>/orders-portal@sha256:<digest>
+#
+# built from the `acrLoginServer` / `containerImageRepository` outputs of
+# infra/main.bicep and the digest returned by the ACR push. For example:
+#
+#   IMAGE_REF="${ACR_LOGIN_SERVER}/orders-portal@sha256:${IMAGE_DIGEST}"
+#   sed -i "s|<TOKEN>|${IMAGE_REF}|" deploy/k8s/deployment.yaml   # <TOKEN> = the value on the image: line
+#   grep -q '<TOKEN>' deploy/k8s/deployment.yaml && { echo "placeholder not substituted"; exit 1; }
+#   kubectl apply -n ghas-mdc-demo -f deploy/k8s/deployment.yaml
+#
+# Deploying by digest, never by a mutable tag, is what lets Defender for Cloud
+# correlate a running pod back to the exact scanned image and back to the commit.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: orders-portal
+  namespace: ghas-mdc-demo
+  labels:
+    app.kubernetes.io/name: orders-portal
+    app.kubernetes.io/instance: orders-portal
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: ghas-mdc-demo
+    app.kubernetes.io/managed-by: github-actions
+    demo.ghas-mdc/owner: platform-security
+    demo.ghas-mdc/criticality: demo-high
+    demo.ghas-mdc/exposure: public-internet
+    demo.ghas-mdc/data-classification: synthetic
+  annotations:
+    demo.ghas-mdc/purpose: >-
+      Intentionally vulnerable-by-design demo app used to show GHAS findings
+      flowing into Microsoft Defender for Cloud.
+    demo.ghas-mdc/lifecycle: ephemeral-delete-after-demo
+spec:
+  # Demo-sized: a single replica on a single-node cluster.
+  replicas: 1
+  revisionHistoryLimit: 2
+  progressDeadlineSeconds: 300
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  selector:
+    # Selector is immutable after creation, so it deliberately uses only the two
+    # labels that never change. Ownership/criticality labels stay out of it.
+    matchLabels:
+      app.kubernetes.io/name: orders-portal
+      app.kubernetes.io/instance: orders-portal
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: orders-portal
+        app.kubernetes.io/instance: orders-portal
+        app.kubernetes.io/component: web
+        app.kubernetes.io/part-of: ghas-mdc-demo
+        app.kubernetes.io/managed-by: github-actions
+        demo.ghas-mdc/owner: platform-security
+        demo.ghas-mdc/criticality: demo-high
+        demo.ghas-mdc/exposure: public-internet
+        demo.ghas-mdc/data-classification: synthetic
+    spec:
+      # The app talks to nobody in Azure, so it never needs an API token mounted.
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: orders-portal
+          # THE PLACEHOLDER. Replaced by CI with an immutable ACR digest
+          # reference. This is the only occurrence of the token in this file.
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 3000
+              protocol: TCP
+          env:
+            - name: NODE_ENV
+              value: production
+            # HOST/PORT match the Dockerfile ENV; repeated here so the contract
+            # is visible in the manifest rather than only in the image.
+            - name: HOST
+              value: "0.0.0.0"
+            - name: PORT
+              value: "3000"
+            # The image creates uid 10001 with --no-create-home, so HOME must
+            # point at a writable path once the root filesystem is read-only.
+            - name: HOME
+              value: /tmp
+          securityContext:
+            allowPrivilegeEscalation: false
+            privileged: false
+            # Safe here because the app keeps all state in an in-memory SQLite
+            # database. If a future change adds an on-disk SQLite file, give it a
+            # dedicated emptyDir mount rather than turning this off.
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            runAsUser: 10001
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          volumeMounts:
+            # Required because the root filesystem is read-only: Node and most
+            # libraries still expect a writable /tmp.
+            - name: tmp
+              mountPath: /tmp
+          # The app exposes /healthz (liveness) and /readyz (readiness, returns
+          # 503 until the in-memory SQLite store is seeded and query-only).
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 12
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
+      volumes:
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 64Mi

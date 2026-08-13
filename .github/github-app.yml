@@ -1,0 +1,22 @@
+instructions: |
+  This repository is an educational GHAS and Microsoft Defender for Cloud demo,
+  not a production template. Preserve the documented seeded findings unless the
+  assigned task is their remediation. Never add real credentials or customer
+  data. Keep the vulnerable SQL path limited to the synthetic read-only data set.
+  Run lint, type checking, build, and tests before proposing changes. Treat
+  `npm run test:security` as the remediation acceptance test.
+
+scripts:
+  - name: Install dependencies
+    command: npm ci
+  - name: Run application
+    command: npm run build && npm start
+  - name: Validate application
+    command: npm run lint && npm run typecheck && npm run build && npm test
+
+server_ready_pattern: '"port":(3000)'
+auto_open_in_browser: true
+
+automation:
+  auto_issue_session: true
+  remote_control: false

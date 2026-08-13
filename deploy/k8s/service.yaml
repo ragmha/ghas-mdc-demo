@@ -1,0 +1,54 @@
+# ############################################################################
+# DEMO-ONLY PUBLIC EXPOSURE - THIS IS INTENTIONAL
+#
+# type: LoadBalancer provisions a PUBLIC Azure Standard Load Balancer with a
+# public IP. The orders-portal app is deliberately vulnerable and is reachable
+# from the internet with no authentication, WAF, or TLS.
+#
+# This is on purpose: Microsoft Defender for Cloud must see an internet-exposed
+# workload for the attack-path and exposure findings that the demo is about.
+# Defender SHOULD raise findings against this Service. That is the demo, not a bug.
+#
+# NEVER copy this Service into a real environment. A production equivalent would
+# be an internal Service behind an ingress controller with TLS, a WAF, and
+# `service.beta.kubernetes.io/azure-load-balancer-internal: "true"`.
+#
+# Tear this down after the demo: `kubectl delete -f deploy/k8s/service.yaml`.
+# ############################################################################
+apiVersion: v1
+kind: Service
+metadata:
+  name: orders-portal
+  namespace: ghas-mdc-demo
+  labels:
+    app.kubernetes.io/name: orders-portal
+    app.kubernetes.io/instance: orders-portal
+    app.kubernetes.io/component: web
+    app.kubernetes.io/part-of: ghas-mdc-demo
+    app.kubernetes.io/managed-by: github-actions
+    demo.ghas-mdc/owner: platform-security
+    demo.ghas-mdc/criticality: demo-high
+    demo.ghas-mdc/exposure: public-internet
+    demo.ghas-mdc/data-classification: synthetic
+  annotations:
+    demo.ghas-mdc/purpose: >-
+      Deliberate public internet exposure so Defender for Cloud can surface the
+      attack path from a GHAS finding to an internet-facing running workload.
+    demo.ghas-mdc/lifecycle: ephemeral-delete-after-demo
+spec:
+  type: LoadBalancer
+  # Cluster-wide traffic policy keeps a single-replica demo reachable regardless
+  # of which node the pod lands on.
+  externalTrafficPolicy: Cluster
+  ipFamilyPolicy: SingleStack
+  selector:
+    app.kubernetes.io/name: orders-portal
+    app.kubernetes.io/instance: orders-portal
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP
+  # To scope exposure to just the demo room's egress IP, uncomment and set:
+  # loadBalancerSourceRanges:
+  #   - 203.0.113.0/24

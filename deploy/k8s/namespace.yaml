@@ -1,0 +1,36 @@
+# DEMO-ONLY namespace for the GHAS + Microsoft Defender for Cloud demo.
+#
+# BOOTSTRAP CONTRACT
+# The AKS cluster runs with Azure RBAC and local accounts disabled. The GitHub
+# Actions identity is granted "Azure Kubernetes Service RBAC Writer" scoped to
+# THIS namespace only. That role can read namespaces but cannot create them, so
+# this file is applied ONCE by an operator holding cluster-admin:
+#
+#   az aks get-credentials -g <rg> -n <aks> && kubectl kubelogin convert-kubeconfig -l azurecli
+#   kubectl apply -f deploy/k8s/namespace.yaml
+#
+# The CI/CD workflow must NOT apply this file. It applies deployment.yaml and
+# service.yaml only. (Deploy infra with grantWorkflowClusterAdmin=true if you
+# would rather let the workflow own the namespace.)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ghas-mdc-demo
+  labels:
+    app.kubernetes.io/part-of: ghas-mdc-demo
+    app.kubernetes.io/managed-by: manual-bootstrap
+    demo.ghas-mdc/owner: platform-security
+    demo.ghas-mdc/criticality: demo-high
+    demo.ghas-mdc/exposure: public-internet
+    demo.ghas-mdc/data-classification: synthetic
+    # Enforce the restricted Pod Security Standard. The orders-portal pod spec is
+    # written to satisfy it, so a regression that adds privileged containers or
+    # host mounts is rejected by the API server rather than caught after the fact.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+  annotations:
+    demo.ghas-mdc/purpose: >-
+      Target namespace for the GHAS -> GitHub Actions -> ACR -> AKS -> Defender for Cloud demo path.
+    demo.ghas-mdc/lifecycle: ephemeral-delete-after-demo
