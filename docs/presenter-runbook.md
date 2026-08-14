@@ -10,6 +10,11 @@ The application you are demonstrating is **Northstar Orders** — a fictional en
 
 Prerequisite: [setup.md](setup.md) completed at **T-48h**. Nothing in this runbook creates data that appears fast enough to demo live.
 
+For the shorter agentic-security version, use [agentic-security.md](agentic-security.md):
+run `/security-review` locally, compare it with the CodeQL alert, and explain
+how Defender adds deployment context. This is an optional fourth tool in the
+story, not a replacement for GHAS scanning.
+
 ---
 
 ## Personas
@@ -78,6 +83,18 @@ Then add the naming note, once, so nobody gets lost later:
 Then set the problem:
 
 > "Two teams, two tools. Security sees a CVE in a running container and doesn't know who owns it. Engineering sees ten thousand dependency alerts and doesn't know which two are actually running in production. The integration closes that gap in both directions."
+
+Land the value before opening the portals:
+
+> "GHAS gives developers security findings where they already work. Defender
+> adds the missing production signal: is this code in a running image, is it
+> exposed, and how critical is the workload? Together, we move from a noisy
+> list of vulnerabilities to an owned, prioritized fix."
+
+The outcome to repeat at the end is:
+
+> "Security can prioritize by real risk, developers get the source and test
+> context they need, and leaders can see a traceable path from finding to fix."
 
 Name the three scenarios and their boundaries now, so you never have to backtrack:
 
