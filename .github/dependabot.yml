@@ -1,0 +1,8 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    # ponytail: security-update PRs only; humans keep the seed until the live fix.
+    open-pull-requests-limit: 0

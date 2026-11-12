@@ -25,7 +25,7 @@ env:
 jobs:
   build-and-deploy:
     name: Build, attest, and deploy
-    if: ${{ vars.DEMO_CONFIGURED == 'true' }}
+    if: ${{ vars.DEMO_CONFIGURED == 'true' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: ${{ vars.DEMO_ENVIRONMENT || 'demo' }}
@@ -172,31 +172,18 @@ jobs:
             --overwrite
           kubectl -n "${K8S_NAMESPACE}" rollout status "deployment/${K8S_DEPLOYMENT}" --timeout=180s
 
-      - name: Smoke test LoadBalancer health endpoint
+      - name: Smoke test through authenticated port-forward
         shell: bash
         run: |
           set -euo pipefail
-          endpoint=""
-          for attempt in {1..30}; do
-            ip="$(kubectl -n "${K8S_NAMESPACE}" get service "${K8S_SERVICE}" -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)"
-            host="$(kubectl -n "${K8S_NAMESPACE}" get service "${K8S_SERVICE}" -o jsonpath='{.status.loadBalancer.ingress[0].hostname}' 2>/dev/null || true)"
-            endpoint="${ip:-${host}}"
-            if [[ -n "${endpoint}" ]]; then
-              break
-            fi
-            echo "Waiting for LoadBalancer endpoint (${attempt}/30)..."
-            sleep 10
-          done
-
-          if [[ -z "${endpoint}" ]]; then
-            echo "LoadBalancer endpoint was not assigned." >&2
-            kubectl -n "${K8S_NAMESPACE}" get service "${K8S_SERVICE}" -o wide
-            exit 1
-          fi
-
-          url="http://${endpoint}/healthz"
+          kubectl -n "${K8S_NAMESPACE}" port-forward \
+            "service/${K8S_SERVICE}" 3000:80 --address 127.0.0.1 > /tmp/port-forward.log 2>&1 &
+          forward_pid=$!
+          trap 'kill "${forward_pid}" 2>/dev/null || true' EXIT
+          url="http://127.0.0.1:3000/healthz"
           for attempt in {1..12}; do
-            if curl --fail --silent --show-error --max-time 5 "${url}"; then
+            if curl --fail --silent --show-error --max-time 5 "${url}" \
+              | python3 -c 'import json,sys; h=json.load(sys.stdin); sys.exit(0 if h.get("status") == "ok" and h.get("syntheticData") is True else 1)'; then
               echo "Smoke test passed: ${url}"
               exit 0
             fi
@@ -205,4 +192,5 @@ jobs:
           done
 
           echo "Smoke test failed: ${url}" >&2
+          cat /tmp/port-forward.log >&2
           exit 1

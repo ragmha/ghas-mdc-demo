@@ -28,7 +28,8 @@ Options:
   --skip-kubernetes-bootstrap
   --what-if
 
-The target GitHub repository must be private. Paid Defender plans and the
+Public and private GitHub source repositories are supported. Secret seeding
+remains private-only. Paid Defender plans and the
 Defender GitHub connector are intentionally not enabled by this script.`);
 }
 
@@ -213,7 +214,7 @@ function sleep(milliseconds) {
 
 function configureGitHubSecurity(repository) {
   const sharedSettings = {
-    dependabot_security_updates: { status: "disabled" },
+    dependabot_security_updates: { status: "enabled" },
     secret_scanning: { status: "enabled" },
     secret_scanning_push_protection: { status: "enabled" },
     secret_scanning_non_provider_patterns: { status: "enabled" },
@@ -309,13 +310,18 @@ try {
     ]),
   );
 
-  if (repositoryDetails.visibility !== "PRIVATE") {
+  if (!["PUBLIC", "PRIVATE"].includes(repositoryDetails.visibility)) {
     throw new Error(
       `Refusing to deploy from ${repositoryDetails.nameWithOwner}: ` +
-        `visibility is ${repositoryDetails.visibility}, not PRIVATE.`,
+        `unsupported visibility ${repositoryDetails.visibility}.`,
     );
   }
   const repository = String(repositoryDetails.nameWithOwner);
+  if (flags.has("--configure-github-security") && repositoryDetails.visibility === "PUBLIC") {
+    throw new Error(
+      "Configure public-repository security manually; --configure-github-security is reserved for licensed private copies.",
+    );
+  }
   const [canonicalOrganization, canonicalRepository] = repository.split("/");
 
   run("az", ["account", "set", "--subscription", subscriptionId]);

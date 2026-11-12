@@ -25,7 +25,7 @@ When presenting, use the name **Northstar Orders**. Do not rename it after a pro
 | SQL query construction | `searchOrders()` in `src/database.ts` interpolates the search term into `LIKE '%...%'` clauses instead of binding it | To produce a CodeQL `js/sql-injection` alert with a visible data-flow path |
 | npm dependency | `lodash` pinned to `4.17.20` as a direct **production** dependency | To produce a Dependabot alert **and** a Defender container VA finding on the same CVE ID (CVE-2021-23337 / CVE-2020-28500, fixed in 4.17.21) |
 | Base image | `node:24-bookworm-slim`, not pinned to a patched digest | To produce OS/component CVEs that GHAS does not see (finding F-4) |
-| Kubernetes Service | `deploy/k8s/service.yaml` is `type: LoadBalancer` — public IP, **no authentication, no TLS, no WAF** | To produce a genuine internet-exposure runtime risk factor for Defender attack-path analysis (finding F-6). Documented in the manifest's own header. |
+| Kubernetes Service | Internal LoadBalancer; no application auth/TLS/WAF | Isolated demo access only, through authenticated localhost port-forward. Internet exposure is not seeded. |
 | Secret handling (opt-in) | A private key is deliberately committed | To trigger GitHub secret scanning generic patterns and push protection |
 
 > **What is *not* deliberately weak:** the workload's runtime posture. The namespace enforces the **restricted** Pod Security Standard and the pod spec satisfies it. The planted weaknesses are in **application code and dependencies** — that is the story the demo tells. Do not weaken the pod spec to "add more findings".
@@ -53,7 +53,9 @@ The vulnerabilities are real but **bounded**. Those bounds are design decisions,
 - The CI identity holds **AKS RBAC Writer scoped to the demo namespace only** — it cannot create namespaces or touch anything else in the cluster.
 - Northstar Orders holds no credentials to anything outside its own container.
 - Exploiting the SQL injection yields synthetic rows. It does not yield cloud access.
-- **However:** the Service is a public LoadBalancer with no authentication. Anyone with the IP can reach Northstar Orders and the injectable endpoint. Limit reach with `loadBalancerSourceRanges` in `deploy/k8s/service.yaml`, and tear it down immediately after the demo.
+- The Service is an internal LoadBalancer. Keep the demo cluster isolated
+  from production networks; internal network users still need to be trusted.
+  Presenter/CI access uses authenticated localhost port-forward.
 
 ### Dependency vulnerability
 
@@ -75,7 +77,7 @@ Three of the safety properties above are checked in code, so a distracted operat
 
 | Guardrail | Enforced by |
 | --- | --- |
-| Demo runs only against a **private** repository | `setup-demo.mjs` and `generate-demo-secret.mjs` both call `gh repo view --json visibility` and abort unless it is `PRIVATE` |
+| Secret seeding runs only against a **private** repository | `generate-demo-secret.mjs` checks visibility. Setup supports public/private source; paid auto-configuration is private-only. |
 | The synthetic key requires conscious opt-in | `generate-demo-secret.mjs` aborts without `--acknowledge-disposable-private-repo` |
 | Paid GitHub security settings are never enabled implicitly | `setup-demo.mjs` touches them only with `--configure-github-security`, and prints a reminder when you omit it |
 | Defender plans and connectors are never enabled by automation | No script enables a Defender plan or creates a connector, under any flag |
@@ -120,7 +122,7 @@ Running this demo costs money. It is not free-tier.
 | **Defender for Containers** | Per vCore / per resource | **Not required for this demo path** — Defender CSPM alone covers it. Adds runtime threat detection and extra cost. |
 | **AKS** | Per node-hour + managed disks | Runs continuously through the 48-hour staging window. |
 | **ACR** | Per tier + storage | Standard tier is sufficient. |
-| **Public IP + Standard Load Balancer** | Per hour + per GB egress | The `orders-portal` Service is `type: LoadBalancer`. This bills for the whole staging window, not just the demo hour. |
+| **Internal Standard Load Balancer** | Azure networking charges | The internal `orders-portal` Service can incur charges throughout staging. |
 
 Cost control:
 
@@ -193,7 +195,7 @@ Everything below is **missing on purpose**. This list doubles as the "what would
 | Default service account | Dedicated service account with minimal RBAC; disable token automounting where unused |
 | No admission control beyond Pod Security Standards | Azure Policy for AKS / Gatekeeper enforcing image provenance as well as pod security |
 | Public API server | Private cluster or authorised IP ranges |
-| Public LoadBalancer Service | Internal Service behind ingress with TLS and a WAF |
+| Internal demo LoadBalancer, no app authentication | Authenticated application ingress with TLS and a WAF where appropriate |
 | Attestation generated but not verified at admission | Notation / Cosign or Ratify with enforced verification. The pipeline already deploys **by immutable digest**, which is the prerequisite. |
 
 > Already done, and worth keeping if you adapt this: the **restricted** Pod Security Standard is enforced at the namespace; the pod runs non-root with a read-only root filesystem (writable `/tmp` supplied as a 64Mi in-memory `emptyDir`), no privilege escalation, all capabilities dropped and a `RuntimeDefault` seccomp profile; CPU/memory requests and limits are set; startup, readiness, and liveness probes are wired to `/readyz` and `/healthz`; and deployment is pinned by immutable digest.
@@ -264,13 +266,13 @@ When presenting, restrict yourself to what the vendor documentation states and w
 
 ## Before you present — safety checklist
 
-- [ ] Demoing from a **disposable private** repo in a licensed org, not the public template.
+- [ ] Public source used with approved org/tenant permissions; optional secret seeding isolated in a disposable private copy.
 - [ ] The application is referred to as **Northstar Orders** throughout — not renamed after a prospect, customer, or internal system.
 - [ ] The Azure subscription is **disposable / non-production**, and holds no real data.
 - [ ] No real credentials exist anywhere in the repo, workflows, or environment.
 - [ ] The scenario 3 key, if used, was generated minutes ago by the script, and its public key was discarded.
 - [ ] All order data is synthetic; the SQLite store is query-only.
-- [ ] The public LoadBalancer IP is either scoped with `loadBalancerSourceRanges` or accepted as short-lived exposure of a synthetic app.
+- [ ] Service is internal and access is through authenticated localhost port-forward; no public ingress was added.
 - [ ] Screenshots and fallback slides contain no real tenant, subscription, customer, or hostname values — **including the public IP**.
 - [ ] Cost expectations are understood, and a cleanup reminder is set.
 - [ ] The "this is not production" framing is in the opening minute — not the closing one.

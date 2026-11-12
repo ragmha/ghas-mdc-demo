@@ -52,7 +52,8 @@ GHAS is not enabled on the repository. This is a **paid-plan operator action**, 
 2. Apply a configuration with code scanning, Dependabot, and secret scanning enabled to the demo repo.
 3. Verify: repo → **Settings** → **Advanced Security** → all items **Enabled**.
 
-Also confirm the repo is **private** and inside the **licensed** org, not a personal fork.
+Confirm the connector's approved org/repository scope and entitlement.
+Public source is supported; only optional secret seeding is private-only.
 
 ---
 
@@ -212,7 +213,7 @@ The operator scripts fail closed on purpose. Each refusal has one cause.
 
 | Message / behaviour | Script | Cause and fix |
 | --- | --- | --- |
-| `visibility is PUBLIC, not PRIVATE` | `setup-demo.mjs`, `generate-demo-secret.mjs` | The target repo is not private. Create a **private** disposable copy — see [setup.md](setup.md) §1. This guardrail exists so you cannot point the demo at the public template. |
+| `visibility is PUBLIC, not PRIVATE` | `generate-demo-secret.mjs` | Secret seeding is private-only. Use an approved disposable private copy; normal source/setup supports public repositories. |
 | `Bootstrap manifest namespace X does not match Bicep output Y` | `setup-demo.mjs` | `deploy/k8s/namespace.yaml` and the Bicep `kubernetesNamespace` parameter disagree. Both must say `ghas-mdc-demo` unless you changed them together. |
 | `Deployment did not return any of: …` | `setup-demo.mjs` | The Bicep deployment ran but an expected output was empty. Re-run; if it persists, inspect the deployment in the portal. |
 | `Could not bootstrap the Kubernetes namespace after Azure RBAC propagation.` | `setup-demo.mjs` | 30 retries (10s apart) exhausted. Confirm your identity has cluster-admin — pass `--operator-principal-id` — then apply `deploy/k8s/namespace.yaml` by hand. |
@@ -255,17 +256,17 @@ gh api "repos/<ORG>/<REPO>" --jq '.security_and_analysis'
 
 ## The deploy smoke test fails
 
-**Symptom:** the workflow reaches *Smoke test LoadBalancer health endpoint* and fails, or `/healthz` does not respond.
+**Symptom:** *Smoke test through authenticated port-forward* fails, or forwarded `/healthz` does not respond.
 
-The workflow polls for a LoadBalancer IP (30 attempts, 10s apart), then curls `http://<endpoint>/healthz` (12 attempts, 10s apart) before failing.
+The workflow opens an authenticated localhost tunnel and retries synthetic
+health 12 times, 10 seconds apart. No public endpoint is required.
 
 | Cause | Check | Fix |
 | --- | --- | --- |
-| No public IP assigned | `kubectl -n ghas-mdc-demo get svc orders-portal -o wide` | Azure LoadBalancer provisioning can take several minutes on a new cluster. Re-run the workflow. |
+| Tunnel unavailable | Inspect the workflow's port-forward log and AKS authorization | Verify `pods/portforward` permission for the namespace-scoped deployment identity; do not expose the app publicly as a workaround. |
 | Pod not ready | `kubectl -n ghas-mdc-demo get pods` | See *AKS deployment fails to pull the image* below. |
 | Startup probe still failing | `kubectl -n ghas-mdc-demo describe pod <pod>` | `/readyz` backs the startup probe with a 12 × 5s budget (~60s) while the in-memory store seeds. Exceeding it restarts the container. |
-| App up but `/readyz` returns `503` | `curl http://<ip>/readyz` | The store is empty or not query-only. Check `kubectl logs`. The app is running but not serving the demo dataset. |
-| `loadBalancerSourceRanges` set | `deploy/k8s/service.yaml` | If you scoped exposure to your demo room, the GitHub Actions runner is outside that range and cannot reach the endpoint. Either widen it temporarily or accept the smoke-test failure and verify locally. |
+| App up but `/readyz` returns `503` | `curl http://127.0.0.1:3000/readyz` through the tunnel | The store is empty or not query-only. Check `kubectl logs`. |
 | Egress blocked | — | Corporate egress policy may block the runner. Verify manually with `curl` from a permitted network. |
 
 Expected healthy responses:

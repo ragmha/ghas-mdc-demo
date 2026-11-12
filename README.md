@@ -8,7 +8,7 @@ to the same development workflow.
 > [!CAUTION]
 > This repository deliberately contains documented vulnerabilities and an
 > outdated dependency. It is an educational demo, not a production template.
-> Use a disposable private copy, synthetic data, and delete the environment
+> Use synthetic data, an isolated demo environment, and delete that environment
 > after the demonstration.
 
 ## The business value
@@ -29,18 +29,25 @@ that GitHub alone cannot see.
 *assigning the right fix*, while Defender helps prove which findings matter in
 the environment that is actually running.
 
-## The story in three acts
+## The story in five acts
 
 | Act | Tool | What to show |
 | --- | --- | --- |
-| 1. Find | GitHub CodeQL, Dependabot, secret scanning | Three realistic security findings in a small codebase |
-| 2. Prioritize | Defender for Cloud (optional) | A deployed container CVE, runtime exposure, and code-to-cloud context |
-| 3. Fix | Copilot Autofix, Copilot coding agent, or `/security-review` | An AI-assisted review, a focused fix, and a security regression test |
+| Prevent | GitHub PR checks + Secret Protection | Dependency review rejects a new vulnerable package; CodeQL/Autofix and governed secret bypass keep review in the developer workflow |
+| Detect | Defender for Cloud (optional) | Attack paths, Cloud Security Explorer, and an attested image traced to its repo/commit |
+| Prioritize | GitHub alerts + campaigns | Deployment and observed runtime-risk filters focus attention on deployed workloads |
+| Fix | CODEOWNERS + Copilot coding agent or Dependabot | A contextual Defender issue, verified ownership, and a human-reviewed upgrade PR |
+| Prove | GitHub security overview + Defender | Risk/remediation trends, secret risk assessment, issue status, and a rescanned fixed deployment |
+
+The [runbook](docs/presenter-runbook.md) adds Prevent before the existing
+Acts 1-3 and Prove afterwards. Allow ~45 minutes including fallback buffer.
 
 The main end-to-end scenario is `lodash@4.17.20`: Dependabot identifies the
 direct dependency, Defender can correlate it to the running image, and a
 GitHub issue can hand the fix to Copilot. The SQL injection and secret canary
-are separate GHAS capabilities, not part of the Defender correlation.
+are separate capabilities, not CVE-to-Dependabot matches. Production context
+can enrich both Dependabot and CodeQL alerts; Defender DevOps security can
+also aggregate code and secret findings.
 
 The integration is deliberately bidirectional:
 
@@ -56,7 +63,14 @@ GitHub: contextual issue + Copilot-assisted remediation
 
 ## Start locally
 
+Requires **Node.js 24 LTS** and a native C++ build toolchain if `better-sqlite3`
+cannot use a prebuilt binary (macOS: Xcode Command Line Tools).
+The command selects this public demo revision; it does not depend on these
+changes having been merged into `main`.
+
 ```powershell
+git clone --branch ragmha-ghas-mdc-demo-gap-fill https://github.com/ragmha/ghas-mdc-demo.git
+cd ghas-mdc-demo
 npm ci
 npm run lint
 npm run typecheck
@@ -67,6 +81,8 @@ npm start
 
 Open <http://localhost:3000>. The app serves only synthetic, in-memory order
 data. The intentionally vulnerable search path is bounded and read-only.
+Local startup binds to `127.0.0.1`; the container explicitly binds to its
+pod interface. The Kubernetes Service is internal, not internet-facing.
 
 To demonstrate the remediation gate:
 
@@ -80,8 +96,12 @@ measurable.
 
 ## Showcase GHAS in GitHub
 
-Use a disposable **private** copy in an organization licensed for GitHub Code
-Security and Secret Protection.
+Use this **public repository** for the application, CodeQL, dependency review,
+Dependabot, and public build provenance. Maintainer permission is needed to
+configure features and view restricted alert data. Use an organization-owned
+public copy for the full team/governance story; private source is optional.
+See the [capability matrix](docs/setup.md#public-source-and-feature-availability)
+for organization, entitlement, and tenant requirements.
 
 1. Enable CodeQL advanced setup, Dependabot alerts, secret scanning, and push
    protection.
@@ -93,6 +113,12 @@ Security and Secret Protection.
      `npm run demo:secret`.
 4. Use Copilot Autofix where available, or assign the generated issue to the
    Copilot coding agent.
+
+For the full story, follow [setup sections 2d-2f](docs/setup.md#2d-ownership-and-dependency-prevention):
+replace the personal CODEOWNERS default in the org copy, require the PR checks, and pre-stage the
+PR-only dependency and secret demonstrations. Dependabot version-update PRs
+are disabled; security-update PRs remain enabled and must not be auto-merged
+before the live fix.
 
 For a pre-PR terminal review, run the dedicated Copilot CLI command from the
 repository:
@@ -121,7 +147,17 @@ What the audience should see:
 3. Defender identifies the image in ACR or AKS and adds CVE, exposure, and
    criticality context.
 4. **Generate GitHub issue** sends that context back to the repository, where
-   the developer can review a fix and run the security regression test.
+   the developer can review an advisory-specific dependency fix. The separate
+   SQL regression test verifies only the SQL remediation.
+
+## Rehearse the complete loop
+
+Follow [the exact rehearsal and pass criteria](docs/setup.md#repeatable-rehearsal-and-observable-pass-criteria):
+baseline alert → attested image → deployed digest → matching Defender CVE →
+owned issue → reviewed dependency upgrade → new deployed digest → later scan
+without that CVE. The source and tooling are repository-ready; live findings,
+connector handoff, and scan closure require an authorized GitHub/Azure tenant.
+No live tenant evidence is bundled or implied.
 
 Start with [docs/setup.md](docs/setup.md), then use
 [docs/presenter-runbook.md](docs/presenter-runbook.md). Provisioning is
@@ -144,7 +180,7 @@ whose blast radius extends beyond the disposable demo environment.
 - [Agentic security](docs/agentic-security.md) - `/security-review` and the
   multi-model security narrative
 - [Presenter runbook](docs/presenter-runbook.md) - the live walkthrough
-- [Setup](docs/setup.md) - private-copy, GitHub, Azure, and Defender setup
+- [Setup](docs/setup.md) - public source, GitHub, Azure, and Defender setup
 - [Findings catalog](docs/findings-catalog.md) - exact seeded findings
 - [Architecture](docs/architecture.md) - detailed code-to-runtime design
 - [Safety and production gaps](docs/safety-and-production-gaps.md) - boundaries

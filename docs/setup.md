@@ -1,6 +1,84 @@
 # Setup
 
-End-to-end setup for the GHAS + Microsoft Defender for Cloud demo.
+End-to-end setup for the public GHAS + Microsoft Defender for Cloud demo.
+
+## Public source and feature availability
+
+Public source is supported; the cloud workload remains **internal**.
+No script creates a connector or enables Defender plans. Obtain explicit
+owner approval before provisioning, changing paid settings, or seeding alerts.
+
+| Target | Demonstrable capabilities and prerequisites |
+| --- | --- |
+| Personal public `ragmha/ghas-mdc-demo` | Local app, CI, CodeQL, dependency graph/review, Dependabot, public artifact attestations, and repository secret scanning/push protection where enabled. Security settings and restricted alerts require maintainer access. No organization overview/campaigns are implied. |
+| Organization-owned public copy | Same public-source capabilities plus team ownership and org policies. Organization dashboards, campaigns, delegated bypass, custom/AI secret controls depend on their feature-specific plan, role, policy and rollout; verify in that org before presenting. |
+| Full MDC integration | Commercial Azure subscription, Defender CSPM, authorized GitHub connector, GitHub organization owner and Azure roles, plus the GHAS entitlement documented by Microsoft. Public visibility alone does not establish integration eligibility. Confirm the selected org's entitlement with its admin. |
+| Optional private copy | Useful for controlled secret-canary rehearsal; private CodeQL/secret capabilities need licensed products. Private build attestations require GitHub Enterprise Cloud. It is not required for the public-source app/dependency loop. |
+
+Sources: [GitHub feature availability](https://docs.github.com/en/code-security/getting-started/github-security-features),
+[security overview](https://docs.github.com/en/code-security/concepts/security-at-scale/security-overview),
+[MDC prerequisites](https://learn.microsoft.com/en-us/azure/defender-for-cloud/github-advanced-security-overview).
+Do not turn on paid products merely to follow this guide. If a capability is
+unavailable, use the repository-level flow and identify the optional segment.
+
+## Repeatable rehearsal and observable pass criteria
+
+Use an authorized disposable **organization-owned public copy** for remote
+rehearsal; the personal public authoring repo remains usable locally.
+Capture evidence locally under ignored `demo-generated/`, never tenant data
+or screenshots with identifiers in this public repository.
+
+1. **Baseline:** record the source commit with `git rev-parse HEAD`; run
+   `npm ci`, `npm run lint`, `npm run typecheck`, `npm run build`, `npm test`,
+   and `node --test tests/runtime.test.mjs`. Expect these to pass.
+   `npm run test:security` must fail while the documented SQL seed remains.
+   Record a chosen open lodash advisory, its affected range and fixed version.
+2. **Prevent:** rehearse §2d's never-merge dependency PR. Pass means the
+   moderate-or-higher check fails and required rules block merging.
+   Secret scenarios remain opt-in in a disposable private copy; no public
+   token/key/password seeding is part of this rehearsal.
+3. **Deploy baseline:** after explicit tenant approval, follow §3-§8.
+   Pass means Actions builds and attests a source-labelled image, deploys
+   `orders-portal@sha256:...`, and its authenticated port-forward smoke test
+   confirms `syntheticData: true`. Service must remain internal.
+4. **Prove identity:** retrieve the exact image reference from the Actions
+   build/deployment, start an authenticated port-forward in a second terminal:
+
+   ```powershell
+   kubectl --kubeconfig demo-generated/kubeconfig -n ghas-mdc-demo port-forward service/orders-portal 3000:80 --address 127.0.0.1
+   ```
+
+   Then run:
+
+   ```powershell
+   node scripts/verify-demo.mjs --expected-image "<registry>/orders-portal@sha256:<64-hex-digest>" --health-url http://127.0.0.1:3000
+   gh attestation verify "oci://<registry>/orders-portal@sha256:<64-hex-digest>" --repo "<org>/<repo>"
+   ```
+
+   Pass means the desired deployment, observed rollout generation, and all
+   active ready pods match that digest, plus synthetic health and provenance.
+   Missing/mismatched evidence fails; Defender remediation is printed
+   **PENDING**, not inferred from these checks.
+5. **Detect and hand off:** after propagation, show the selected CVE on
+   that image/resource in Defender, its Related GitHub Alert and source/commit.
+   Generate the issue, verify owner/context, and use reviewed source remediation.
+   Missing correlation is **pending/unavailable**, not a passing rehearsal.
+6. **Fix separately:** in a PR use `npm install --save-exact lodash@<verified-fixed-version>`
+   and inspect both manifest and lockfile against the live advisory range.
+   Run normal CI and review before merge. Do not repair SQL in this dependency
+   PR. The SQL test still fails by design; a separate parameterized-query PR
+   must pass it. Never bypass required reviews to stage a fix.
+7. **Verify runtime closure:** deploy the reviewed commit, repeat step 4
+   with the **new** digest, and wait for Defender's next assessment. In the
+   portal, record resource, digest, assessment timestamp after deployment and
+   the selected CVE's absence/resolution for that same image. Absence of a
+   scan/resource is **unavailable**, not fixed. A stale assessment is
+   **pending**; an old/wrong digest is **mismatch**. A closed issue or a green
+   script alone does not establish runtime remediation.
+8. **Repeat without reset:** keep baseline and remediation commit IDs and
+   dated evidence. Use a fresh disposable copy/environment at the recorded
+   baseline commit for the next run. Do not force-push, undo an approved fix,
+   or automatically re-seed `main`. Delete billable resources after rehearsal.
 
 The application is **Northstar Orders** — a fictional enterprise inner-source order portal running on **synthetic** data, deliberately vulnerable for demonstration purposes. It does not represent any real company or customer. See [architecture.md](architecture.md#the-application-northstar-orders).
 
@@ -14,7 +92,7 @@ Repository scripts (plain Node ESM — all require **Node.js 24 LTS**):
 | --- | --- | --- |
 | `node scripts/preflight.mjs [--cloud]` | Verifies local tooling: Node.js 24 LTS, npm, Git, Azure CLI, GitHub CLI, Docker CLI+daemon, kubectl. `--cloud` also checks Azure/GitHub CLI auth. | Read-only |
 | `node scripts/setup-demo.mjs …` | Provisions the Azure foundation, creates the GitHub environment, sets the seven environment variables and the two repository gate variables, bootstraps the Kubernetes **namespace** | **Aborts unless the target repo is `PRIVATE`.** Never enables Defender plans or connectors. Touches paid GitHub settings only with `--configure-github-security`. |
-| `node scripts/verify-demo.mjs` | Checks repo is private, GitHub environment + all nine variables, security settings, resource group, ACR, AKS, image, workload, public endpoint, and `/healthz` | Read-only, takes no arguments |
+| `node scripts/verify-demo.mjs --expected-image … --health-url …` | Checks public/private source, variables, resources, internal Service, rollout and running digests, and forwarded synthetic health | Security API limitations are warnings; Defender assessment remains manual/pending |
 | `node scripts/generate-demo-secret.mjs --acknowledge-disposable-private-repo` | Generates the scenario 3 unregistered key | **Aborts unless the repo is `PRIVATE`** and the acknowledgement flag is present |
 | `node scripts/cleanup-demo.mjs --confirm <resource-group>` | Deletes the Azure resource group and the demo GitHub variables | Aborts unless the confirmation string exactly matches the state file |
 
@@ -31,7 +109,7 @@ Confirm **all** of these before starting. Missing any one of them breaks the cor
 | Requirement | Notes |
 | --- | --- |
 | GitHub organization, and you are an **organization owner** | Required to install the Defender for Cloud GitHub App and to create security campaigns. |
-| A **private** repository for the demo | **Hard requirement.** `setup-demo.mjs` and `generate-demo-secret.mjs` both abort if `gh repo view --json visibility` is not `PRIVATE`. |
+| A public or private source repository | Public is the primary source path. Only the optional secret generator requires a disposable **private** repo. |
 | **GHAS / GitHub Code Security** on the demo repository | Paid. Required for CodeQL on a private repo and for the Defender integration. **Explicit operator action** — not on by default. |
 | **GitHub Secret Protection**, with **generic patterns** and **push protection** enabled | Paid. Required for scenario 3. **Explicit operator action.** |
 | **Copilot coding agent** available to the org and the demo repo | Required for the scenario 2 finale. Requires a Copilot licence with the coding agent enabled by an org admin. |
@@ -89,26 +167,34 @@ Practical consequences:
 
 ---
 
-## 1. Create the disposable private copy
+## 1. Create the authorized organization copy
 
-Do **not** demo from the public template.
+The public template runs locally as-is. For the full tenant integration, use
+an authorized organization-owned public copy; do not modify customer repos.
 
 ```powershell
 $ORG  = "<your-licensed-org>"
 $REPO = "ghas-mdc-demo-<yyyymmdd>"
 
-gh repo create "$ORG/$REPO" --private --template <public-template-owner>/ghas-mdc-demo
-gh repo clone "$ORG/$REPO"
+gh repo fork ragmha/ghas-mdc-demo --org "$ORG" --fork-name "$REPO" --clone
 cd $REPO
 ```
 
-If `--template` is unavailable, clone the public repo and mirror-push into a new private repo. Either way the result must be **private** and inside the licensed org.
+Alternatively use GitHub's fork flow into the authorized org. For optional
+secret seeding use a separate private copy with its own approvals.
+
+This revision is published on `ragmha-ghas-mdc-demo-gap-fill`. If it has
+not yet been merged upstream, carry that reviewed branch into the org
+copy's `main` through a normal reviewed PR **before** enabling deployment.
+The deployment workflow deliberately refuses feature-branch dispatches.
+Enable Actions explicitly in a fork and select it as the default `gh` repo
+with `gh repo set-default "$ORG/$REPO"` so checks target the approved copy.
 
 Confirm it, because the scripts will refuse otherwise:
 
 ```powershell
 gh repo view "$ORG/$REPO" --json nameWithOwner,visibility
-# expect: "visibility": "PRIVATE"
+# expect the approved name and "visibility": "PUBLIC"
 ```
 
 Record the value — you will need `$ORG/$REPO` throughout.
@@ -117,7 +203,11 @@ Record the value — you will need `$ORG/$REPO` throughout.
 
 ## 2. Enable GitHub security features (operator action)
 
-These are **paid-plan enablement steps**. They are deliberate, billable operator actions. Nothing here is an automated default.
+Use the capability matrix above first. Public-source CodeQL, dependency
+review and Dependabot do not require purchasing the private-repository
+products. Organization configurations and private paid capabilities below
+require an authorized operator and the applicable entitlement; nothing is
+enabled by publishing this source.
 
 ### 2a. Apply a security configuration (recommended)
 
@@ -156,6 +246,116 @@ gh workflow run codeql.yml --repo "$ORG/$REPO"
 ```
 
 > Copilot Autofix generates fix suggestions for **CodeQL** alerts on pull requests and the default branch. It does **not** require a Copilot subscription. Coverage is not uniform across every alert type — treat autofix as "where supported", and have the fallback in [presenter-runbook.md](presenter-runbook.md) ready.
+
+### 2d. Ownership and dependency prevention
+
+1. The public authoring template ships `@ragmha`, its personal-repository
+   owner, in `.github/CODEOWNERS`. In the licensed org copy, replace it with a
+   real visible team with **explicit write access** to the disposable repo.
+   Check GitHub's CODEOWNERS error display. CODEOWNERS requests PR reviews,
+   not generic issue assignment;
+   Microsoft's [integration overview](https://learn.microsoft.com/en-us/azure/defender-for-cloud/github-advanced-security-overview)
+   describes MDC-generated issue routing to code owners, so rehearse it and
+   verify the actual issue assignee. Require **code-owner review** separately
+   in the branch ruleset. Have a second, authorized code-owner reviewer ready:
+   a PR author cannot approve their own PR.
+2. Confirm **Dependency graph**, **Dependabot alerts**, and **Dependabot
+   security updates** are enabled. `.github/dependabot.yml` sets
+   `open-pull-requests-limit: 0` to disable **version-update** PRs, not
+   security-update PRs. There is deliberately **no lodash ignore rule**:
+   it would suppress the security fix we want to show. Dependabot only opens
+   PRs; leave them unmerged until the live fix. Disable any org bot/rule that
+   automatically merges dependency updates in this disposable repo.
+3. Run a rehearsal PR so the **Review dependency changes** and
+   **Analyze JavaScript/TypeScript** checks exist. Repo **Settings → Rules →
+   Rulesets**: create/adjust an active branch ruleset targeting `main`, require
+   PRs, code-owner review, and those status checks, and avoid using a bypass
+   actor for the demo. Retain the existing CI check as required too.
+   A failed action alone does **not** prevent merging.
+4. Pre-stage a **never-merge** PR adding a new direct vulnerable dependency,
+   not the already-present lodash pin. On a throwaway branch in the authorized
+   copy, run:
+
+   ```powershell
+   git switch -c demo/dependency-review
+   npm install --package-lock-only --ignore-scripts --save-exact minimist@1.2.5
+   git add package.json package-lock.json
+   git commit -m "demo: introduce vulnerable dependency on PR only"
+   ```
+
+   Push that branch to the disposable copy and open a PR targeting `main`.
+   Expect dependency review to fail for
+   [CVE-2021-44906 / GHSA-xvch-5gv4-984h](https://github.com/advisories/GHSA-xvch-5gv4-984h)
+   (critical prototype pollution; fixed in 1.2.6). The workflow rejects
+   **moderate and higher** vulnerabilities, in both production and development
+   dependencies. Check the live advisory and failed log before presenting.
+   Close the PR without merging; never deploy this branch.
+5. From the existing F-1 CodeQL alert, stage an **Autofix-generated PR** where
+   offered, leave it open, and wait for its CodeQL PR check. Show the suggested
+   diff and resolved finding on that PR. An unrelated PR does not introduce
+   the SQL injection afresh: an existing default-branch alert is not proof of
+   a new PR alert. If Autofix is unavailable, show the existing alert and a
+   manually staged parameterized-query PR, labelled as manual.
+
+References: [dependency review configuration](https://docs.github.com/en/code-security/tutorials/secure-your-dependencies/customize-dependency-review-action),
+[Dependabot security-update customization](https://docs.github.com/en/code-security/how-tos/secure-your-supply-chain/manage-your-dependency-security/customizing-dependabot-security-prs),
+[code owners](https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners).
+
+### 2e. Secret prevention and triage (manual, private copy only)
+
+These settings are **not** configured or checked by the operator scripts.
+Org/enterprise policy may control them; rehearse with the actual accounts.
+
+| Capability | Setup and safe evidence |
+| --- | --- |
+| Repo-level custom pattern | Repo **Settings → Advanced Security → Secret Protection → Custom patterns → New pattern**. Name it `Northstar demo canary`, set **Secret format** to `NST_DEMO_[A-Z0-9]{24}`, test with a matching synthetic string in the pattern editor, then **Save and dry run**. Inspect results, publish the pattern, and enable its **Push protection**. Keep the matching value out of `main`; attempt it only on a throwaway branch in the private copy and capture the rejection. Nothing authenticates with this invented format. |
+| Delegated bypass | Configure at **organization** level for this demo: **Settings → Advanced Security → Configurations**, edit the custom configuration, enable push protection, set **Bypass privileges → Specific actors**, and select the designated reviewer actors. Apply only to the disposable repo. Use a contributor account **not** in that list to request bypass and a separate authorized reviewer to approve/deny it. Do not exempt the contributor. Current docs also support repository/enterprise configuration; org policy can override repo settings. |
+| Copilot secret scanning / generic passwords | Repo **Settings → Advanced Security → Secret Protection → Scan for AI-detected secrets → Enable** (older UI: **Scan for generic passwords**). This is separate from regex-based non-provider patterns and needs no Copilot subscription. In a throwaway private branch, commit a clearly synthetic password assignment with realistic context, never a service credential. Wait for the **AI-detected/generic** alert list and capture the result. Detection is probabilistic; if no alert appears, show the setting and disclose that rather than promise detection or push blocking. |
+| Secret validity checks | At the same repo settings page, enable **Validity checks** and save changes if prompted. Checks send **supported provider tokens to their provider**; get the owner's consent before enabling. Use the configuration and supported-pattern documentation as evidence, not a live credential. Our unregistered key, custom canary, and fake password cannot demonstrate an **active** provider token. |
+
+For the custom pattern, enter the prefix `NST_DEMO_` followed immediately by
+24 uppercase letters in the pattern editor or disposable rehearsal branch.
+No full matching value is committed here, so the pattern does not flag its
+own setup instructions. Prefer this
+deterministic pattern for the delegated-bypass rehearsal; retain the existing
+RSA scenario as the optional built-in-pattern demonstration.
+If showing an approved bypass, push only the synthetic canary, inspect the
+request/reviewer audit trail and resulting alert, then delete the disposable
+repo after the session. For a denial, keep the rejected request as evidence.
+
+Official instructions:
+[custom patterns](https://docs.github.com/en/code-security/how-tos/secure-your-secrets/customize-leak-detection/define-custom-patterns),
+[delegated bypass](https://docs.github.com/en/code-security/how-tos/secure-your-secrets/manage-bypass-requests/enable-delegated-bypass),
+[AI-detected secrets](https://docs.github.com/en/code-security/how-tos/secure-your-secrets/detect-secret-leaks/enabling-secret-scanning-for-ai-detected-secrets),
+[validity checks](https://docs.github.com/en/code-security/how-tos/secure-your-secrets/customize-leak-detection/enabling-validity-checks-for-your-repository).
+
+### 2f. Prepare the leadership close
+
+Org **Security and quality → Overview**: select the demo repo and date range,
+and capture Detection, Remediation, and Prevention trends. **Risk** shows
+the current alert backlog; **Coverage** shows feature adoption. A fresh repo
+may have too little history to show a meaningful trend. Use dated rehearsal
+captures; do not invent before/after numbers. Summary views omit generic
+secret alerts, so show the dedicated alert list for the synthetic password.
+
+With the organization owner's approval, org **Security and quality →
+Assessments → Scan your organization** runs the secret risk assessment
+(and may also start an initial code security risk assessment). This scans
+the organization, not just this repo: use an authorized demo org and prepare
+the report ahead of time. A secret risk assessment can only be generated
+once every **90 days**; use an existing dated report if appropriate.
+It is a baseline exposure assessment, not an instant post-fix score.
+
+Prepare a dated, completed rehearsal of the F-2 fix: reviewed PR merged,
+new attested image digest deployed, registry/runtime scans refreshed,
+and the affected recommendation/resource no longer reporting the chosen CVE.
+Keep the live seed unmerged; use a separate disposable rehearsal environment
+or captures from a prior run. Separately capture issue assignment/status
+sync in Defender. A closed issue is **not** proof the workload is fixed,
+and the SQL regression test does **not** verify the lodash upgrade.
+
+References: [security overview](https://docs.github.com/en/code-security/concepts/security-at-scale/security-overview),
+[secret risk assessment](https://docs.github.com/en/code-security/how-tos/secure-at-scale/configure-organization-security/configure-specific-tools/assess-your-secret-risk).
 
 ---
 
@@ -214,11 +414,12 @@ The namespace also enforces the **restricted** Pod Security Standard (`pod-secur
 
 The script **intentionally does not** enable paid Defender plans or create the Defender GitHub connector — under any flag. Those remain explicit operator actions: §4 and §5.
 
-It also **aborts if the target repository is not `PRIVATE`**, so it cannot be pointed at the public template by mistake.
+Setup accepts public/private source; secret generation remains private-only.
 
 The script **intentionally does not** enable paid Defender plans or create the Defender GitHub connector — under any flag. Those remain explicit operator actions: §4 and §5.
 
-It also **aborts if the target repository is not `PRIVATE`**, so it cannot be pointed at the public template by mistake.
+The optional paid GitHub configuration flag is reserved for private copies;
+configure available public-source features manually.
 
 State is written to `demo-generated/deployment-state.json`, plus a scoped `demo-generated/kubeconfig` and local `demo-generated/bin/` tooling. Cleanup reads that state file.
 
@@ -295,17 +496,19 @@ gh variable list --repo "$ORG/$REPO"
 ### Verify the foundation
 
 ```powershell
-node scripts/verify-demo.mjs
+node scripts/verify-demo.mjs --expected-image "<registry>/orders-portal@sha256:<64-hex-digest>" --health-url http://127.0.0.1:3000
 ```
 
-It takes no arguments (other than `--help`) and reads `demo-generated/deployment-state.json`. It checks, in order:
+It reads `demo-generated/deployment-state.json`. Supply `--expected-image`
+from the build and `--health-url` from the authenticated tunnel as shown
+in the rehearsal above. It checks, in order:
 
-1. The repository is **private**.
+1. The repository has an approved public/private visibility.
 2. The GitHub environment exists, all **seven** environment variables match the deployed values exactly, `DEMO_ENVIRONMENT` matches, and `DEMO_CONFIGURED` is `true`.
 3. GitHub security: code security (`advanced_security` or `code_security`), `secret_scanning`, `secret_scanning_push_protection`, and `secret_scanning_non_provider_patterns` all enabled.
 4. Azure resource group, ACR, and AKS cluster exist.
 5. The container image is published.
-6. The AKS workload is running and the LoadBalancer has a public endpoint.
+6. The AKS workload is running, the Service is internal, and running digests match `--expected-image`.
 7. `GET /healthz` returns `status: "ok"` **and** `syntheticData: true` — so a pass also confirms you are looking at the synthetic demo dataset.
 
 Because it compares variables against the state file, it also catches the case where someone edited a variable by hand and drifted it away from the deployed infrastructure.
@@ -388,7 +591,7 @@ What it does:
 5. **Render** `deploy/k8s/deployment.yaml`, replacing its single `__IMAGE__` token with the immutable `‹login-server›/orders-portal@sha256:…` digest reference.
 6. `kubectl apply` the rendered Deployment, then `service.yaml`.
 7. Annotate the Deployment with source/revision/run-URL, then `rollout status --timeout=180s`.
-8. Smoke-test `GET /healthz` on the LoadBalancer endpoint (30 × 10s waiting for the IP, then 12 × 10s for health).
+8. Smoke-test synthetic `GET /healthz` through an authenticated localhost port-forward (12 × 10s retries).
 
 Two things worth noting:
 
@@ -408,13 +611,15 @@ node scripts/verify-demo.mjs
 az acr repository show-tags --name <ACR_NAME> --repository orders-portal --output table
 kubectl get pods,svc -n ghas-mdc-demo
 
-# health check against the LoadBalancer
-$ip = kubectl get svc orders-portal -n ghas-mdc-demo -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-curl "http://$ip/healthz"
-curl "http://$ip/readyz"
+# In a second terminal keep the authenticated local tunnel open:
+kubectl -n ghas-mdc-demo port-forward service/orders-portal 3000:80 --address 127.0.0.1
+# In the original terminal:
+curl "http://127.0.0.1:3000/healthz"
+curl "http://127.0.0.1:3000/readyz"
 ```
 
-Expected: pods `Running` in namespace `ghas-mdc-demo`, deployment and service both named `orders-portal`, the service holding an external IP, and:
+Expected: pods `Running` in namespace `ghas-mdc-demo`, deployment and service
+named `orders-portal`, an internal Service, and through the local tunnel:
 
 - `GET /healthz` → `200` with `{"status":"ok","syntheticData":true, ...}`
 - `GET /readyz` → `200` with `{"status":"ready", "database":{"mode":"query_only", ...}}`
@@ -435,7 +640,10 @@ gh attestation verify oci://<ACR_NAME>.azurecr.io/orders-portal:<commit-sha> --r
 
 Attestation-based mapping links the image digest to the exact repository, commit, and build identity. See [Using artifact attestations](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/use-artifact-attestations).
 
-> The service is **deliberately internet-facing** (`type: LoadBalancer`, no auth, no TLS, no WAF) so Defender sees a genuine internet-exposure risk factor. If you want to limit reach to the demo room, uncomment `loadBalancerSourceRanges` in `deploy/k8s/service.yaml` and re-apply. Never copy this Service into a real environment.
+> The Service is an **internal** LoadBalancer. Use authenticated port-forward,
+> not public ingress. An internet-exposure risk factor is not expected for this
+> baseline; use deployment and observed criticality context instead. Do not
+> weaken access controls to manufacture an attack path.
 
 ---
 
@@ -533,7 +741,11 @@ Confirm before proceeding:
 - [ ] It exists only in the disposable private repo.
 - [ ] The repo will be deleted after the demo.
 
-Push protection blocks the push at the client. Bypassing it (choosing "used in tests" / "false positive") is what produces a repository alert instead. Both outcomes are demonstrable — decide in advance which one you are showing, and do not bypass unless you specifically want the alert.
+Rehearse whether push protection blocks this PKCS#8 (`BEGIN PRIVATE KEY`)
+canary and record the actual detected type; do not promise `rsa_private_key`.
+If it is not blocked, use the custom-pattern canary from §2e instead.
+Bypassing a block (with approval if delegated bypass applies) produces an
+alert. Decide the outcome in advance; never bypass with a real credential.
 
 Clean up locally with:
 
@@ -541,7 +753,10 @@ Clean up locally with:
 node scripts/generate-demo-secret.mjs --clean
 ```
 
-Generic patterns such as `rsa_private_key` are regex-based; AI-detected patterns cover unstructured secrets. See [Supported secret scanning patterns](https://docs.github.com/en/code-security/reference/secret-security/supported-secret-scanning-patterns) and [Push protection](https://docs.github.com/en/code-security/concepts/secret-security/push-protection).
+Built-in non-provider patterns are regex-based; AI-detected patterns cover
+unstructured secrets. Generic/custom canaries have no provider validity
+checks. See [Supported secret scanning patterns](https://docs.github.com/en/code-security/reference/secret-security/supported-secret-scanning-patterns)
+and [Push protection](https://docs.github.com/en/code-security/concepts/secret-security/push-protection).
 
 ---
 
@@ -589,7 +804,7 @@ See [Creating and managing security campaigns](https://docs.github.com/en/code-s
 | --- | --- |
 | **T-48h** | §1–§7: create the copy, enable GHAS, provision Azure and the `demo` environment, enable Defender plans, create the connector, enable agentless scanning, run the pipeline, verify the workload is running. |
 | **T-48h** | §8: create the resource criticality rule immediately after the workload is running. |
-| **T-24h** | §9: verify scenarios 1 and 2 are visible on both sides. |
+| **T-24h** | §9: verify scenarios 1 and 2; §2d-2f: rehearse failed PR check, secret controls, ownership and Prove evidence. |
 | **T-4h** | §10: run all validation queries. Capture screenshots as fallback evidence. |
 | **T-30m** | Scenario 3 key generation (if using it). Presenter preflight in the runbook. |
 | **After** | [cleanup.md](cleanup.md) — delete everything. |
