@@ -6,7 +6,10 @@ The application you are demonstrating is **Northstar Orders** — a fictional en
 
 > **Naming, so you don't stumble on stage:** the application is *Northstar Orders*. Its container image, Kubernetes deployment, and service are all named `orders-portal`, in namespace `ghas-mdc-demo`. Say "Northstar Orders" for the application; read `orders-portal` when pointing at a Kubernetes object, an image, or a Defender recommendation. Explain that once, early.
 
-**Total: ~35 minutes** (25 min core, 10 min buffer). Scenario 2 is the spine — if you are short on time, cut scenario 3 first, then scenario 1.
+**Total: ~45 minutes** (35 min core, 10 min buffer). The five acts are
+**Prevent → Detect → Prioritize → Fix → Prove**; the existing Acts 1-3
+retain their numbers below. The optional RSA extension uses buffer time.
+Scenario 2 is the spine: cut the RSA extension first, then extended SQL detail.
 
 Prerequisite: [setup.md](setup.md) completed at **T-48h**. Nothing in this runbook creates data that appears fast enough to demo live.
 
@@ -21,9 +24,11 @@ story, not a replacement for GHAS scanning.
 
 | Act | Persona | Tool | Question they are answering |
 | --- | --- | --- | --- |
+| Prevent | **Developer + security reviewer** | GitHub PR checks + Secret Protection | "Can we stop new risk before it lands, with accountable exceptions?" |
 | 1 | **Security manager** | Microsoft Defender for Cloud | "Of everything running in my cloud, what actually matters, and who owns the fix?" |
 | 2 | **AppSec engineer** | GitHub Security | "Which of my thousands of alerts are in code that is genuinely deployed and exposed?" |
 | 3 | **Developer** | GitHub + Copilot | "Fine — fix it, and let me review the diff." |
+| Prove | **CISO** | GitHub security overview + Defender | "Can we distinguish prevention, remediation progress, and a genuinely fixed workload?" |
 
 The arc is one CVE travelling from a running container back to a line in `package.json` and then forward again as a pull request.
 
@@ -35,8 +40,8 @@ Do not skip. Every item has burned someone.
 
 **Environment**
 
-- [ ] `node scripts/verify-demo.mjs` passes.
-- [ ] `GET /healthz` on the LoadBalancer IP returns `200` with `"syntheticData": true` — proving the app is serving the synthetic dataset, not just that pods are up.
+- [ ] `node scripts/verify-demo.mjs --expected-image … --health-url http://127.0.0.1:3000` passes its infrastructure/runtime checks; manually verify the printed pending Defender step.
+- [ ] `GET /healthz` through authenticated localhost port-forward returns `200` and `"syntheticData": true`; Service remains internal.
 - [ ] Service present: `kubectl get svc orders-portal -n ghas-mdc-demo`.
 - [ ] ACR contains the pipeline-built image tag.
 - [ ] The pipeline built the image **after** the Defender connector was created.
@@ -58,6 +63,12 @@ Do not skip. Every item has burned someone.
 - [ ] Advanced Security shows **Enabled** on the repo.
 - [ ] Copilot coding agent is assignable — confirm "Copilot" appears in the issue assignee picker.
 - [ ] No GitHub issue has already been generated from the recommendation (otherwise the **Take action** button offers a different path).
+- [ ] Personal CODEOWNERS default replaced in the org copy; ruleset requires code-owner approval; a second reviewer is ready; MDC issue ownership rehearsed.
+- [ ] Never-merge dependency PR has a failed **Review dependency changes** check and `main` rules require it.
+- [ ] Autofix PR (or clearly labelled manual fallback) has completed CodeQL PR analysis.
+- [ ] Custom pattern published with push protection; separate contributor/reviewer accounts rehearsed delegated bypass.
+- [ ] AI-detected password alert captured if available; validity setting verified without a real credential.
+- [ ] Dated security overview, secret risk assessment, and post-redeploy scan evidence ready (setup §2f).
 
 **Presentation hygiene**
 
@@ -74,7 +85,11 @@ Do not skip. Every item has burned someone.
 
 Say this explicitly, up front:
 
-> "This is a public MIT reference template. I'm demoing from a **disposable private copy** in a licensed org, and I'll delete it when we're done. The application is **Northstar Orders** — a fictional inner-source order portal running on entirely synthetic data. It isn't anyone's real system. The vulnerabilities are deliberate. Everything you'll see is native product behaviour — no custom glue."
+> "This is a public MIT demo repository. The application is **Northstar
+> Orders**, a fictional order portal running on synthetic data. The source
+> is public; cloud access is internal. The optional secret rehearsal uses a
+> separate private copy. I'll distinguish repository-ready tooling from
+> evidence verified in this tenant."
 
 Then add the naming note, once, so nobody gets lost later:
 
@@ -101,6 +116,38 @@ Name the three scenarios and their boundaries now, so you never have to backtrac
 1. **CodeQL SQL injection** — static analysis depth, plus AI-assisted fixing.
 2. **`lodash@4.17.20`** — the runtime correlation flow. *This is the main event.*
 3. **Secret detection** — adjacent GHAS capability. Different mechanism, not the same correlation.
+
+---
+
+## Prevent — Developer on a PR (6 min)
+
+Use the never-merge rehearsals from [setup §2d-2e](setup.md#2d-ownership-and-dependency-prevention).
+Do not install or deploy a new vulnerable package live.
+
+1. **Dependency gate (2 min):** open the PR adding `minimist@1.2.5`,
+   its failed **Review dependency changes** check, and the merge gate.
+   Read the advisory and threshold: moderate or higher, all dependency scopes.
+   "This is new risk in a PR, not the lodash already on the default branch."
+   Close without merging. A failed check blocks merging only when required
+   by the ruleset and not bypassed.
+2. **CodeQL + Autofix on a PR (1 min):** open the pre-staged SQL fix PR,
+   explain where Autofix generated the suggestion, inspect its diff, then
+   show the completed CodeQL PR check. Label a manual fallback honestly.
+   Do not present an unchanged default-branch finding as a newly introduced
+   PR alert. Keep the fix unmerged for the existing F-1 walkthrough.
+3. **Secret controls (3 min):** show the custom-pattern rejection using the
+   invented Northstar canary, then the non-privileged contributor's
+   delegated-bypass request and the separate reviewer's decision/audit trail.
+   This demo's policy is organization-level; configuration is not in this repo.
+   Show the dedicated AI-detected/generic password alert list if the rehearsal
+   produced an alert, otherwise show **Scan for AI-detected secrets** enabled
+   and disclose the missing detection. Finish on **Validity checks**:
+   "Supported provider tokens can be checked with their provider. These fake
+   generic/custom canaries have no provider validity, so I won't claim active."
+
+Fallback: use captured failed checks and bypass decisions, not a live wait
+for scanning or a real token. Secret findings may appear in Defender DevOps
+security aggregation; that is separate from the container-CVE match next.
 
 ---
 
@@ -154,6 +201,12 @@ Show the container marked **critical** in **Inventory**, or the risk factor on t
 
 Other risk factors Defender CSPM derives from attack-path analysis: **Internet Exposure**, **Sensitive Data**, **Critical Resources**, **Lateral Movement**. Mention them; only claim the ones you can actually see on screen.
 
+Briefly show the rehearsed **Attack path analysis** path if one exists, then
+the **Cloud Security Explorer → Container Images → Pushed by code repositories**
+query. Open the attested Actions build to connect the image digest with its
+source repo/commit. If no attack path was generated, say so and show the
+verified exposure/risk factor instead; never invent a path.
+
 ### 1.5 Hand off to engineering
 
 **Remediation Insights** → the **Runtime** box → **Take action** → **Generate GitHub issue**.
@@ -162,11 +215,16 @@ Other risk factors Defender CSPM derives from attack-path analysis: **Internet E
 
 A popup confirms with a link to the issue. Open it. Point out the `Defender for Cloud` and `security` labels.
 
+Show the actual assignee and verify it is the intended owner. The MDC
+integration documents routing to CODEOWNERS; CODEOWNERS itself controls PR
+review requests, not generic issue autoassignment. If no owner was assigned,
+assign the intended user explicitly and disclose that fallback.
+
 **Checkpoint:** if **Generate GitHub issue** is missing or greyed out, you are missing GitHub or repository permissions. Do not debug live — switch to your pre-created issue (see [Fallback evidence](#fallback-evidence)) and carry on.
 
 ---
 
-## Act 2 — AppSec engineer, in GitHub (8 min)
+## Act 2 — AppSec engineer, in GitHub (7 min)
 
 **Framing:** "I'm on the other side of that handoff, drowning in alerts."
 
@@ -181,12 +239,20 @@ Repo → **Security and quality** → **Dependabot**.
 Apply a production-context filter, for example:
 
 ```text
-has:deployment AND runtime-risk:internet-exposed
+has:deployment
 ```
 
 > "That deployment metadata isn't something I maintained. It's populated automatically because Defender for Cloud is connected."
 
+The safe baseline is internal: `runtime-risk:internet-exposed` is **not**
+an expected result. Show criticality or other observed properties if present;
+do not expose the vulnerable app merely to populate a filter.
+
 Also available: `artifact-registry` and `artifact-registry-url` from storage records, and the `runtime-risk` values shown as properties on individual alert pages. See [Prioritizing alerts using production context](https://docs.github.com/en/code-security/tutorials/secure-your-organization/prioritize-alerts-in-production-code).
+
+Production-context filters apply to **both Dependabot and CodeQL** alerts.
+That enrichment is different from matching a container CVE to a Dependabot
+advisory; do not imply the SQL injection is itself a container CVE.
 
 **Checkpoint:** if the filter returns nothing, do not improvise. Criticality context takes **up to 12 hours** to propagate from Defender to GitHub. Show the runtime-risk properties on the individual alert page instead, or fall back to screenshots.
 
@@ -226,7 +292,10 @@ If a **Copilot Autofix** suggestion is present: open it, read the diff, and be h
 
 **Be explicit about the boundary:**
 
-> "Note what I am *not* claiming. This CodeQL finding does not flow through the Defender correlation. Code-to-runtime recommendations currently cover container and container-image vulnerability assessment. This is static analysis depth, shown alongside — not part of the same chain."
+> "CodeQL alerts can carry production context too. But this SQL injection
+> is not a container-CVE-to-Dependabot match. Code-to-runtime recommendations
+> currently cover container/image vulnerability assessment; these are
+> different signals, not one vulnerability."
 
 ---
 
@@ -252,7 +321,8 @@ The repository ships `.github/github-app.yml`, which gives the agent standing in
 - Never add real credentials or customer data.
 - Keep the vulnerable SQL path limited to the synthetic data set.
 - Run lint, typecheck, build, and tests before proposing changes.
-- Treat **`npm run test:security`** as the remediation acceptance test.
+- Use **`npm run test:security`** for the SQL remediation, not as evidence
+  the lodash upgrade is fixed.
 
 > "We've told the agent the rules of this repo — including which test proves the fix. That's guardrails for AI-authored changes, not blind trust."
 
@@ -264,13 +334,17 @@ Switch to the pre-staged PR.
 
 ### 3.3 Review the PR
 
-Show the diff: the `lodash` bump in `package.json` and the regenerated lockfile. Show the CI checks. Show that CodeQL and Dependabot re-ran.
+Show the diff: the `lodash` bump in `package.json` and the regenerated lockfile.
+Show CI and the relevant dependency-alert/check results. A staged Dependabot
+security-update PR is an alternative to the coding agent, not a second
+upgrade that must also merge. Require the actual code owner's review.
 
 > "This is still a pull request. It gets reviewed, it gets tested, it gets approved by a human. The agent removed the typing, not the judgement."
 
-If the repo's security regression tests ran (`npm run test:security`), point at them:
-
-> "And there's a test asserting the fix holds — so the next person can't quietly reintroduce it."
+For F-2, verify both manifest and lockfile use a version outside the chosen
+advisory's affected range. `npm run test:security` checks SQL injection and is
+expected to fail while F-1 remains seeded; it does **not** validate lodash.
+When showing the separate SQL fix PR, its passing security test is relevant.
 
 ### 3.4 Close the loop
 
@@ -282,13 +356,15 @@ If your pre-staged PR is merged and the pipeline has re-run, you can note that t
 
 ---
 
-## Act 4 — Scenario 3, secret detection (4 min, optional)
+## Optional extension — Scenario 3, RSA secret detection (4 min)
 
 **Only run this if you completed the opt-in setup and are comfortable.** Skip it under time pressure.
 
 ### 4.1 Frame the boundary first
 
-> "Changing gears. This is **adjacent GHAS capability** — it is *not* the runtime-CVE correlation we just walked through. Different detection engine, no Defender involvement, no runtime risk factor. I'm showing it because secret exposure is the other half of what teams ask about, but I don't want you to conflate the two."
+> "Changing gears. This is **adjacent GHAS capability**, not the runtime-CVE
+> match. Defender DevOps security can aggregate secret findings, but that
+> doesn't mean a secret has been proven active in this running image."
 
 ### 4.2 Safety statement
 
@@ -314,9 +390,14 @@ git commit -m "demo: seed generic secret canary"
 git push
 ```
 
-> "Blocked before it ever reaches the remote. This is GitHub Secret Protection's push protection using built-in generic patterns — `rsa_private_key` here."
+> "Blocked before it reaches the remote. This is the detected type shown
+> by push protection."
 
-Or:
+The generator emits PKCS#8 (`BEGIN PRIVATE KEY`), so do not promise
+`rsa_private_key`. Use the type actually observed during rehearsal; if the
+key was not blocked, use the deterministic custom-pattern demonstration.
+
+Or, only with the configured bypass approval:
 
 **(b) Bypass, then alert** — bypass push protection with a reason, then show the alert under **Security and quality** → **Secret scanning**.
 
@@ -324,7 +405,10 @@ Or:
 
 Decide which one before you start; do not attempt both live.
 
-Note the categories: **generic** patterns (regex, includes private keys), **AI-detected** patterns (unstructured secrets like passwords), and **provider** patterns (AWS, Azure, Stripe). Generic detection is model-assisted for the unstructured cases and does not require a Copilot subscription.
+Distinguish regex-based **non-provider** patterns (including private keys),
+**AI-detected** secrets (unstructured passwords), and **provider** patterns
+(AWS, Azure, Stripe). AI-detected secret scanning needs no Copilot
+subscription. None of our synthetic canaries supports provider validity.
 
 ### 4.4 Delete the key immediately
 
@@ -335,6 +419,31 @@ node scripts/generate-demo-secret.mjs --clean
 ```
 
 The authoritative cleanup is deleting the repository. See [cleanup.md](cleanup.md).
+
+---
+
+## Prove — CISO close (4 min)
+
+1. **GitHub outcome (1 min):** org **Security and quality → Overview**,
+   filtered to the demo repo/date range: show Detection, Remediation, and
+   Prevention trends, then **Risk** and **Coverage**. Use dated rehearsal
+   evidence if the new repo has no meaningful history. Generic secret alerts
+   are omitted from summary views; show their dedicated list separately.
+2. **Secret risk baseline (1 min):** org **Security and quality → Assessments**,
+   open the pre-run secret risk assessment. State its date and scope:
+   "An organization-wide baseline, not a live remediation score. Reruns are
+   limited to once every 90 days." Do not start an org-wide scan on stage.
+3. **Two distinct closure signals (2 min):** show the generated issue's
+   assignee/status reflected in Defender. Then show the completed rehearsal:
+   reviewed upgrade PR merged → new attested image digest deployed →
+   later registry/runtime assessment no longer reports the selected lodash
+   CVE on that resource. Point at the digest, CVE, and scan time.
+   A closed issue proves workflow progress, **not** runtime remediation.
+   Other container CVEs may keep the broader recommendation open.
+
+Do not wait for rescans live or merge the live seed early. Use clearly dated
+captures from a prior run or a separate disposable rehearsal environment.
+If the runtime result has not been observed, state **remediation pending**.
 
 ---
 
@@ -370,9 +479,17 @@ Capture all of these at **T-4h** while everything is verified green. Keep them i
 | 11 | CodeQL alert with the data-flow path | Act 2.5 |
 | 12 | Copilot Autofix suggested diff (if it was offered) | Act 2.5 |
 | 13 | Copilot coding agent PR with checks passing | Act 3.3 |
-| 14 | Push protection block message | Act 4.3a |
-| 15 | Secret scanning alert | Act 4.3b |
+| 14 | Push protection block message with actual detected type | Optional RSA extension |
+| 15 | Secret scanning alert | Optional RSA extension |
 | 16 | Cloud Security Explorer validation query returning results | Preflight |
+| 17 | PR-only minimist diff, failed dependency-review log, required merge gate | Prevent |
+| 18 | Autofix SQL PR diff and CodeQL PR check (label manual fallback if used) | Prevent |
+| 19 | Custom-pattern dry run/published setting, rejection, bypass request and review decision | Prevent |
+| 20 | AI-detected password alert (if detected) and validity-check setting, no real token | Prevent |
+| 21 | Attack path if observed; attestation source repo/commit and image digest | Act 1 |
+| 22 | Generated issue's actual owner and code-owner PR review | Acts 1 / 3 |
+| 23 | Dated security overview trends, risk/coverage, and secret risk assessment | Prove |
+| 24 | GitHub issue status in Defender; fixed deployed digest and later scan without selected CVE | Prove |
 
 **Pre-create and keep in reserve:**
 
@@ -392,8 +509,9 @@ Avoid claims you cannot substantiate on screen:
 - ❌ "Real time" / "instantly" — it is asynchronous, with published multi-hour windows.
 - ❌ "Copilot fixes it automatically" — it opens a **pull request** that a human reviews. Autofix produces a **suggestion**.
 - ❌ "Autofix works on every alert" — coverage varies; show what is actually offered.
-- ❌ "This correlates the SQL injection to runtime" — it does not. Container/image VA only.
-- ❌ "The secret finding flows into Defender" — it does not.
+- ❌ "The SQL injection matches this container CVE" — CVE matching is to Dependabot. CodeQL can still receive production context.
+- ❌ "Secrets can never appear in Defender" — DevOps security can aggregate them; that is not runtime-CVE correlation or provider validity.
+- ❌ "The issue closed, so runtime is fixed" — verify the new deployed digest and a later assessment.
 - ❌ "Zero configuration" — connector authorization, App install, paid plan enablement, and criticality rules are all deliberate operator actions.
 - ❌ Any performance, detection-rate, or comparative claim not printed in the product docs.
 

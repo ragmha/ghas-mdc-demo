@@ -14,14 +14,25 @@ All vulnerabilities are **deliberate**. All data is **synthetic**. See [safety-a
 
 | ID | Scenario | Detector | Surfaces in | Runtime correlation | Fix path |
 | --- | --- | --- | --- | --- | --- |
-| **F-1** | SQL injection in `searchOrders` (`src/database.ts`) | CodeQL (`javascript-typescript`, `security-extended`) | GitHub code scanning | **No** | Copilot Autofix where supported, else manual parameterisation |
+| **F-1** | SQL injection in `searchOrders` (`src/database.ts`) | CodeQL (`javascript-typescript`, `security-extended`) | GitHub code scanning | Production context possible; **not a container-CVE match** | Copilot Autofix where supported, else manual parameterisation |
 | **F-2** | `lodash@4.17.20` — known CVEs in a direct npm production dependency | Dependabot **and** Defender container VA (MDVM) | GitHub Dependabot + Defender recommendations | **Yes — primary flow** | Defender-generated GitHub issue → Copilot coding agent PR |
 | **F-3** | Unregistered RSA private key committed | GitHub secret scanning, generic patterns | GitHub secret scanning / push protection | **No** | Block at push, or bypass → alert → delete repo |
 | **F-4** | Base image (`node:24-bookworm-slim`) OS / language CVEs | Defender container VA (MDVM) | Defender recommendations only | Partial | Base image update (usually out of scope for the demo) |
 | **F-5** | Agentless code scanning findings | Trivy / ESLint / Checkov via the connector | Defender DevOps security recommendations | No | Informational |
-| **F-6** | Internet-exposed workload with no auth/TLS/WAF | Defender CSPM attack-path analysis | Defender attack paths + `runtime-risk` on GHAS alerts | n/a — it *is* the risk factor | Intentional; see safety doc |
+| **F-6** | Internet-exposure context (not seeded in internal baseline) | Defender CSPM attack-path analysis | Observed risk factors only | n/a | Do not expose the vulnerable app to obtain a finding |
+| **F-7** | PR-only `minimist@1.2.5` | Dependency review | Required PR check | **No** | Close without merging; never deploy |
+| **F-8** | Custom `NST_DEMO_` canary / synthetic generic password (opt-in) | Custom regex / AI-detected secret scanning | Push protection / dedicated secret alert lists | **No container-CVE match** | Governed bypass or denial; delete disposable repo |
 
 **F-2 is the demo.** Everything else is context.
+
+F-7 and F-8 are **rehearsal instructions**, not additional committed seeds.
+Follow [setup sections 2d-2e](setup.md#2d-ownership-and-dependency-prevention).
+F-7 introduces a new direct dependency on a never-merge branch, giving dependency
+review a real delta to reject; the lodash already on `main` is not that delta.
+The [minimist advisory](https://github.com/advisories/GHSA-xvch-5gv4-984h)
+is CVE-2021-44906 (critical; 1.2.6 fixes it). F-8's custom format is invented,
+and AI password detection is probabilistic. Neither proves provider-token
+validity or container-CVE correlation.
 
 ---
 
@@ -66,7 +77,7 @@ Where Copilot Autofix offers a suggestion, it generates a fix using the codebase
 
 - **Autofix coverage is not universal.** Show what is actually offered on the alert; do not promise a suggestion will appear. Have the manual fix ready.
 - Autofix output is an LLM-generated **suggestion**. It requires review, including verifying it preserves intended behaviour.
-- **This finding does not correlate to runtime.** Code-to-runtime recommendations currently cover container and container-image vulnerability assessment recommendations only ([code-to-runtime mapping](https://learn.microsoft.com/en-us/azure/defender-for-cloud/code-to-runtime-mapping)). Presenting F-1 as part of the Defender correlation chain would be inaccurate.
+- **This is not a container-CVE match.** Code-to-runtime recommendations cover container/image VA ([mapping scope](https://learn.microsoft.com/en-us/azure/defender-for-cloud/code-to-runtime-mapping)); SQL injection is not matched to a container CVE. However, [production context](https://docs.github.com/en/code-security/tutorials/secure-your-organization/prioritize-alerts-in-production-code) can enrich **both CodeQL and Dependabot** alerts. Show only properties actually present.
 - The SQLite store is **query-only and synthetic**, and the search term is length-bounded by `validateSearchTerm`, so the injection is demonstrable without exposing or mutating anything meaningful. It is not a safe pattern to reproduce.
 - The `security-extended` suite produces more alerts than the default suite. Filter to the SQL injection alert on stage rather than scrolling the list.
 
@@ -213,7 +224,7 @@ gh attestation verify oci://<ACR_NAME>.azurecr.io/orders-portal:<commit-sha> --r
 
 | Field | Value |
 | --- | --- |
-| Secret type | `rsa_private_key` (generic pattern category) |
+| Secret type | Verify the observed type for the PKCS#8 `BEGIN PRIVATE KEY` canary; do not assume `rsa_private_key` |
 | Detector | GitHub secret scanning, built-in generic patterns; push protection |
 | Generated by | `scripts/generate-demo-secret.mjs` — RSA-2048, PKCS#8 PEM |
 | Path | `demo-generated/unregistered-demo-private-key.pem` |
@@ -223,7 +234,7 @@ gh attestation verify oci://<ACR_NAME>.azurecr.io/orders-portal:<commit-sha> --r
 
 > ### This is adjacent GHAS capability, not the runtime-CVE correlation
 >
-> F-3 demonstrates GitHub's built-in generic secret detection and push protection. It is a **different detection engine** with a **different surface**. It does not involve Defender for Cloud, produces no runtime risk factor, and shares **no correlation path** with F-2. Do not present them as one story.
+> F-3 demonstrates a different detection engine, not F-2's CVE-to-Dependabot match. Defender DevOps security can aggregate code, secret, and dependency findings; that aggregation is not proof a secret is active in a running workload. Rehearse whether this key is blocked; use the custom canary if not.
 
 ### Safety requirements — non-negotiable
 
@@ -265,7 +276,10 @@ From [Supported secret scanning patterns](https://docs.github.com/en/code-securi
 
 Alert types: **user alerts**, **push protection alerts** (raised when a contributor bypasses push protection), and **partner alerts** (sent directly to providers, not shown in the repo's Security tab).
 
-Generic secret detection uses models to identify unstructured secrets and **does not require a Copilot subscription**. Validity checks and extended metadata are available to GitHub Team / Enterprise customers who enable them as part of **GitHub Secret Protection**.
+AI-detected generic secret scanning uses models for unstructured secrets and
+**does not require a Copilot subscription**. Regex non-provider patterns are
+separate. Provider validity checks do **not** apply to these synthetic
+generic/custom canaries; never seed a real provider token for this demo.
 
 ### Two demonstrable outcomes — pick one in advance
 
@@ -339,16 +353,18 @@ Agentless code scanning also generates an **SBOM** on every scan, giving a query
 
 | Field | Value |
 | --- | --- |
-| Source | `deploy/k8s/service.yaml` — `type: LoadBalancer`, public Azure Standard Load Balancer, no authentication, no TLS, no WAF |
+| Source | `deploy/k8s/service.yaml` — internal Azure LoadBalancer; no public ingress |
 | Detector | Defender CSPM attack-path analysis |
 | Where | Defender for Cloud → **Attack paths** / **Recommendations**; on the GitHub side as the `runtime-risk:internet-exposed` alert filter and property |
-| Deliberate? | **Yes.** Documented in the manifest's own header comment. |
+| Seeded? | **No.** Safe baseline is internal. |
 
 ### Why it exists
 
-The demo needs a real **Internet Exposure** runtime risk factor. A workload behind an internal service produces no exposure signal, and the `runtime-risk` filters in GitHub would return nothing. Defender **should** raise findings against this Service — that is the demo, not a bug.
+Internet Exposure is a product capability, not a required seeded finding.
+The internal baseline can show deployment/criticality context without it.
+Do not weaken the Service to manufacture an attack path.
 
-Reachable without authentication once the LoadBalancer IP is assigned:
+Reachable through an authenticated localhost port-forward:
 
 | Endpoint | Response |
 | --- | --- |
@@ -359,9 +375,11 @@ Reachable without authentication once the LoadBalancer IP is assigned:
 ### Caveats
 
 - **Never copy this Service into a real environment.** The production equivalent is an internal Service behind an ingress controller with TLS, a WAF, and `service.beta.kubernetes.io/azure-load-balancer-internal: "true"`.
-- Northstar Orders has no authentication, so anyone with the IP can reach it — including `/api/orders`, the injectable endpoint. It serves only synthetic data, but you should still limit reach: uncomment `loadBalancerSourceRanges` in `service.yaml` and set it to your demo room's egress range.
+- Northstar Orders has no application authentication. Keep its Service internal
+  and access it only through the authenticated tunnel in the isolated demo cluster.
 - Scoping `loadBalancerSourceRanges` will also break the deploy workflow's `/healthz` smoke test, because the GitHub Actions runner falls outside the allowed range. Decide which you want before the pipeline runs.
-- The public IP is billable for as long as it exists. Tear it down promptly — see [cleanup.md](cleanup.md).
+- The internal load balancer and cluster can incur charges. Tear them down
+  promptly — see [cleanup.md](cleanup.md).
 - Exposure findings depend on Defender CSPM attack-path analysis completing. Do not promise this beat unless you have seen it in preflight.
 
 ---

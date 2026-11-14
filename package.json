@@ -8,7 +8,7 @@
     "lint": "eslint \"src/**/*.ts\" \"tests/**/*.ts\"",
     "typecheck": "tsc --noEmit",
     "build": "tsc",
-    "test": "npm run build -- --pretty false && node --test dist/tests/app.test.js",
+    "test": "npm run build -- --pretty false && node --test dist/tests/app.test.js tests/runtime.test.mjs",
     "test:security": "npm run build -- --pretty false && node --test dist/tests/security-regression.test.js",
     "start": "node dist/src/server.js",
     "preflight": "node scripts/preflight.mjs",

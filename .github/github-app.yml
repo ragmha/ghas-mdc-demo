@@ -4,7 +4,9 @@ instructions: |
   assigned task is their remediation. Never add real credentials or customer
   data. Keep the vulnerable SQL path limited to the synthetic read-only data set.
   Run lint, type checking, build, and tests before proposing changes. Treat
-  `npm run test:security` as the remediation acceptance test.
+  `npm run test:security` as the SQL remediation acceptance test, not a lodash
+  upgrade check. For dependency remediation, verify the manifest and lockfile
+  version against the assigned advisory; preserve the separate SQL seed.
 
 scripts:
   - name: Install dependencies

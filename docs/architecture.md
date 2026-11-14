@@ -52,26 +52,26 @@ The product name and the deployed resource names differ. Both are correct; know 
 Public template repo (this repo, MIT)
         │  presenter copies (fork / "Use this template" / mirror push)
         ▼
-Disposable PRIVATE repo in a licensed GitHub organization
-        │  demo is delivered from the private copy only
+Organization-owned PUBLIC demo source (private is optional)
+        │  internal Azure workload; authorized tenant integration
         ▼
 Deleted after the demo (see cleanup.md)
 ```
 
-Why a private copy in a licensed org:
+Why use an authorized organization for the full integration:
 
 | Reason | Detail |
 | --- | --- |
 | Licensing | GHAS paid features (code scanning on private repos, secret scanning alerts/push protection at org scale) are billed per active committer. Enablement is an **explicit operator action** — see [GitHub Advanced Security billing](https://docs.github.com/en/billing/concepts/product-billing/github-advanced-security). |
 | Defender connector scope | The MDC GitHub connector is installed against an **organization**, not a personal fork. See [Connect your GitHub organizations](https://learn.microsoft.com/en-us/azure/defender-for-cloud/quickstart-onboard-github). |
-| Sandbox guidance | Microsoft's own sandbox guidance says to **use a private repository for the integration**. See [Deploy GHAS integration (sandbox project)](https://learn.microsoft.com/en-us/azure/defender-for-cloud/github-advanced-security-deploy-sandbox). |
+| Public source | GitHub offers CodeQL, dependency review, Dependabot and attestations for public repos. Microsoft still documents GHAS/Defender entitlement and org-owner prerequisites for the full integration; public visibility is not an entitlement. |
 | Safety | Scenario 3 generates a throwaway private key. It must never live in a public repo, even though it is unregistered and worthless. |
 | Disposal | A disposable copy can be deleted wholesale, which is the only reliable cleanup for secret-scanning artifacts. |
 
 ## Live path
 
 ```
- GitHub (private copy)
+ GitHub (public source; optional private rehearsal)
    ├─ CodeQL (javascript-typescript, security-extended)  ──► code scanning alerts ──► Copilot Autofix
    ├─ Dependabot                      ──► dependency alerts (lodash 4.17.20)
    ├─ Secret scanning + push protection (generic patterns)
@@ -92,7 +92,7 @@ Why a private copy in a licensed org:
        Azure Kubernetes Service (AKS)
           namespace:  ghas-mdc-demo   (bootstrapped once by an operator, not by CI)
           deployment: orders-portal   (created by the workflow, pinned by digest)
-          service:    orders-portal   (type: LoadBalancer — deliberately internet-facing)
+          service:    orders-portal   (internal LoadBalancer; authenticated port-forward)
           │
           ▼
  Microsoft Defender for Cloud
@@ -114,11 +114,12 @@ Why a private copy in a licensed org:
 | SQLite store | `better-sqlite3` over an **in-memory** database (`:memory:`) seeded with **synthetic** rows at startup. Effectively **query-only** in the request path — the API exposes no write endpoint, and the process is stateless. Backs scenario 1 so the SQL injection is demonstrable without a real data store. |
 | GitHub Actions (`demo` environment) | `codeql.yml` (advanced setup, `javascript-typescript` + `security-extended`), `ci.yml`, `build-and-deploy.yml`. Builds, pushes to ACR, attests, renders `deployment.yaml`, applies it, and deploys **by digest**. OIDC federation — no stored registry password. |
 | ACR | Image storage, repository `orders-portal`, tagged with the commit SHA. Scanned by Defender container VA before deployment. |
-| AKS | Runtime for Northstar Orders. Namespace `ghas-mdc-demo` (bootstrapped once by an operator; the CI identity is namespace-scoped and cannot create it), deployment and service `orders-portal`; manifests in `deploy/k8s/`. The service is `type: LoadBalancer` — **deliberately internet-exposed**, so Defender produces a genuine exposure risk factor. |
+| AKS | Runtime for Northstar Orders. Namespace `ghas-mdc-demo` is bootstrapped by an operator; CI is namespace-scoped. Deployment/service `orders-portal` use an **internal** LoadBalancer. Presenter/CI access uses authenticated port-forward. |
 | Defender for Cloud | Correlates code → build → registry → runtime, and pushes runtime context back to GitHub alerts. |
 | `infra/main.bicep` | Subscription-scoped Bicep template: resource group, ACR, AKS, the federated deployment identity, and RBAC. Emits the values the scripts consume (`acrLoginServer`, `deploymentIdentityClientId`, `kubernetesNamespace`, …) plus a `manualFollowUpSteps` list naming the paid, interactive steps it deliberately leaves to an operator. |
 | `scripts/*.mjs` | Operator tooling: `preflight.mjs`, `setup-demo.mjs`, `verify-demo.mjs`, `generate-demo-secret.mjs`, `cleanup-demo.mjs`. All are plain Node ESM, run with `node scripts/<name>.mjs` (or the `npm run demo:*` aliases), and require **Node.js 24 LTS**. State is written to `demo-generated/`. |
-| `.github/github-app.yml` | Copilot coding agent configuration: repo guardrails (preserve seeded findings, never add real credentials, keep the vulnerable SQL path on synthetic data), the validate command, and `npm run test:security` as the remediation acceptance test. |
+| `.github/github-app.yml` | Copilot coding agent configuration: repo guardrails, validate command, and `npm run test:security` for SQL remediation (not lodash verification). |
+| `.github/CODEOWNERS`, `.github/dependabot.yml`, `.github/workflows/dependency-review.yml` | Replaceable review owner, security-update PRs without version-update PRs, and moderate-or-higher dependency review. Required checks/code-owner review are manual ruleset setup. |
 
 ## Code-to-runtime mapping methods
 
@@ -146,7 +147,13 @@ From [Vulnerability management for containers](https://learn.microsoft.com/en-us
 - Runtime VA is **not supported** for containers on Windows nodes or nodes using AKS ephemeral OS disks. Autoscaled clusters may return partial results if nodes are down at scan time.
 - Runtime VA scans the container **images** in use — it does not scan the container runtime layer.
 
-Code-to-runtime recommendation surfacing is currently limited to **container and container image vulnerability assessment recommendations** ([code-to-runtime mapping](https://learn.microsoft.com/en-us/azure/defender-for-cloud/code-to-runtime-mapping)). CodeQL findings are **not** part of that recommendation chain — see the scenario boundaries below.
+Code-to-runtime recommendation surfacing is currently limited to **container and container image vulnerability assessment recommendations** ([code-to-runtime mapping](https://learn.microsoft.com/en-us/azure/defender-for-cloud/code-to-runtime-mapping)).
+The container-CVE match is to Dependabot, not SQL-injection findings.
+[Production context](https://docs.github.com/en/code-security/tutorials/secure-your-organization/prioritize-alerts-in-production-code)
+can nevertheless enrich **both CodeQL and Dependabot** alerts.
+[Defender DevOps security](https://learn.microsoft.com/en-us/azure/defender-for-cloud/defender-for-devops-introduction)
+can also aggregate code, secret, and dependency findings. These are distinct
+capabilities, not evidence that every finding is a runtime CVE.
 
 ## Asynchronous enrichment — documented propagation windows
 
@@ -172,11 +179,14 @@ Practical consequence: **the pipeline must have run, the image must have been pu
 
 | # | Scenario | Where it lives | Correlates to runtime? |
 | --- | --- | --- | --- |
-| 1 | CodeQL SQL injection in `searchOrders` (`src/database.ts`) over query-only synthetic SQLite, with Copilot Autofix where supported | GitHub code scanning only | **No.** Code-to-runtime recommendations currently cover container/image VA recommendations only. Present this as static-analysis depth and AI-assisted remediation, not as a runtime correlation. |
+| 1 | CodeQL SQL injection in `searchOrders` (`src/database.ts`) over query-only synthetic SQLite, with Copilot Autofix where supported | GitHub code scanning; production context where available | **No container-CVE match.** Production context is supported for CodeQL too; do not conflate it with CVE matching. |
 | 2 | `lodash@4.17.20` — a direct production dependency — seen by **both** Dependabot and Defender container VA | GitHub + ACR + AKS + MDC | **Yes.** This is the primary, natively supported correlation flow: Defender recommendation → Associated CVEs → Related GitHub Alerts → Remediation Insights → generated GitHub issue → Copilot coding agent PR. |
-| 3 | Opt-in, newly generated, **unregistered** private key committed in the disposable copy | GitHub secret scanning / push protection only | **No.** |
+| 3 | Opt-in, newly generated, **unregistered** private key committed in the disposable copy | GitHub secret scanning / push protection; DevOps aggregation may also surface secrets | **No container-CVE match.** |
 
-> **Scenario 3 is adjacent GHAS capability, not the same runtime-CVE correlation.** It demonstrates GitHub's built-in generic secret detection and push protection. It does not flow through Defender for Cloud, does not produce a runtime risk factor, and shares no correlation path with scenario 2. Say this out loud during the demo.
+> **Scenario 3 is adjacent capability, not the same runtime-CVE match.**
+> Defender DevOps aggregation is not proof of provider validity or runtime
+> use. Rehearse the PKCS#8 key's actual detected type; use the custom-pattern
+> canary if the generated key is not blocked.
 >
 > **Never use a real credential.** The key is generated fresh at demo time, is never registered with any provider, and is destroyed with the repo. See [safety-and-production-gaps.md](safety-and-production-gaps.md).
 
@@ -194,7 +204,8 @@ Runtime Risk Factors surfaced by Defender CSPM attack-path analysis and reflecte
 This demo deliberately drives two of these:
 
 - **Critical Resources** — via a resource criticality classification rule you create in setup (deterministic, operator-controlled).
-- **Internet Exposure** — via the `orders-portal` Service (the Northstar Orders workload), which is `type: LoadBalancer` with a public Azure Standard Load Balancer and no authentication, WAF, or TLS. This is intentional and documented in `deploy/k8s/service.yaml`; Defender **should** raise findings against it. Scope it to your demo room's egress with `loadBalancerSourceRanges` if you prefer.
+- **Internet Exposure** — not seeded in the safe baseline. The Service is
+  internal; do not make a vulnerable app public to obtain this signal.
 
 **Sensitive Data** and **Lateral Movement** are environment-dependent. Do not promise them.
 
@@ -207,7 +218,9 @@ On the GitHub side these appear as alert filters such as `has:deployment` and `r
 - AKS is addressed by `AKS_NAME` inside `AZURE_RESOURCE_GROUP`, using `kubelogin` with the federated identity — not cluster admin credentials.
 - Deployment is gated by two **repository** variables: `DEMO_ENVIRONMENT` (which environment to target) and `DEMO_CONFIGURED` (must equal `true` or the job is skipped). This means a fork of the public template cannot deploy anywhere by accident — the gate is closed until an operator opens it.
 - The Microsoft sandbox walkthrough uses ACR admin username/password repository secrets; this demo intentionally does **not**, because a demo that teaches credential storage undercuts the secret-scanning message.
-- The only "secret" in the demo is the synthetic, unregistered key in scenario 3, generated by `scripts/generate-demo-secret.mjs`.
+- Secret scenarios use only synthetic, unregistered material: the generated
+  key in scenario 3 and optional custom-pattern/password canaries in private
+  rehearsal branches. None authenticates to a service.
 
 ### Variable contract
 
@@ -262,13 +275,15 @@ The scripts under `scripts/` are deliberately narrow. Knowing where each one sto
 | --- | --- | --- |
 | `preflight.mjs [--cloud]` | Verifies local tooling — Node.js **exactly major 24**, npm, Git, Azure CLI. `--cloud` adds cloud-context checks. | Change anything. |
 | `setup-demo.mjs` | Provisions resource group, ACR, AKS, the federated deployment identity; creates the GitHub environment; sets the seven environment variables and the two repository gate variables; bootstraps the Kubernetes **namespace** (retrying while Azure RBAC propagates). | Apply `deployment.yaml` or `service.yaml` — the workflow owns those. Enable **any** paid GitHub security setting unless `--configure-github-security` is passed. Enable **any** Defender for Cloud plan. Create the Defender GitHub connector. Set `DEMO_CONFIGURED` when `--skip-kubernetes-bootstrap` is used. |
-| `verify-demo.mjs` | Checks repo is private, GitHub security configuration, resource group, ACR, AKS, published image, workload, LoadBalancer endpoint, and `/healthz`. | Change anything. Verify Defender-side correlation. |
+| `verify-demo.mjs` | Checks public/private source, variables, resources, internal Service, expected deployed/running image digest and forwarded synthetic health. | Verify Defender-side assessment closure; it reports that as pending. Security API availability is reported separately. |
 | `generate-demo-secret.mjs` | Generates the scenario 3 RSA-2048 PKCS#8 key; discards the public key. `--clean` removes it. | Run against a public repo. Run without `--acknowledge-disposable-private-repo`. Commit or push anything. |
 | `cleanup-demo.mjs --confirm <rg>` | Deletes the Azure resource group from `demo-generated/deployment-state.json`, plus the seven environment variables and the `DEMO_CONFIGURED` / `DEMO_ENVIRONMENT` repository variables. Idempotent. | Delete the GitHub repo, the Defender connector, the criticality rule, or disable Defender plans. Run without an exact resource-group match. |
 
 Two guardrails are enforced in code, not just documented:
 
-- **Private repository required.** Both `setup-demo.mjs` and `generate-demo-secret.mjs` call `gh repo view --json visibility` and **abort unless it is `PRIVATE`**. You cannot accidentally run either against the public template.
+- **Private secret rehearsal required.** Only `generate-demo-secret.mjs`
+  requires `PRIVATE`; setup accepts public/private source. Paid GitHub
+  auto-configuration remains private-only and explicit.
 - **Paid enablement is never implicit.** `setup-demo.mjs` touches GitHub security settings only behind `--configure-github-security`, and it never enables a Defender plan or creates a connector under any flag. Instead, the Bicep template emits a `manualFollowUpSteps` list that the script prints — naming Defender CSPM, agentless code scanning, agentless container coverage, the GitHub connector, and GHAS enablement as **REQUIRED** operator actions, and Defender for Containers as **OPTIONAL and not needed** for this demo path.
 
 A third consistency check runs at setup time: the script reads the namespace out of `deploy/k8s/namespace.yaml` and **fails if it does not match** the Bicep `kubernetesNamespace` output — so the manifest and the infrastructure cannot silently disagree.

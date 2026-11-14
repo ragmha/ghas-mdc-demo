@@ -8,7 +8,7 @@ Provisions the supported delivery path:
 Deliberately DEMO-SIZED, not production-sized:
   * Basic ACR (no geo-replication, no private endpoints, no customer-managed keys)
   * Single-node AKS system pool on a burstable VM SKU
-  * Public API server and public LoadBalancer ingress
+  * Public authenticated API server; internal LoadBalancer application access
 
 Deliberately NOT done here (licensed and/or interactive runbook steps):
   * Defender CSPM plan enablement, plus agentless code scanning and agentless
